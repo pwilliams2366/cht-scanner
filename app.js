@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.2.0";
+  const APP_VERSION = "Prototype 1 · v0.2.1";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -387,6 +387,7 @@
     last: null,
     lastQty: 1,
     scannerMissing: false,
+    scannerWaiting: false,
     active: false,
     busy: false,
     lastReports: null,
@@ -537,12 +538,27 @@
     focusScan();
   }
 
+  // Scanner status: "ok" (green), "missing" (red), "waiting" (amber: re-armed,
+  // waiting for the first scan to prove the scanner is back).
   function focusScan(userTap) {
     if (currentScreen !== "scan" || modalOpen) return;
-    if (userTap === true) state.scannerMissing = false; // re-check on every tap
     const inp = $("scan-input");
+    if (userTap === true && state.scannerMissing) {
+      // Re-arm without letting the on-screen keyboard pop up again.
+      state.scannerMissing = false;
+      state.scannerWaiting = true;
+    }
+    inp.setAttribute("inputmode", state.scannerWaiting ? "none" : "text");
     inp.value = "";
     try { inp.focus({ preventScroll: true }); } catch (e) { inp.focus(); }
+    updateReady();
+  }
+
+  function scannerProvedConnected() {
+    if (!state.scannerMissing && !state.scannerWaiting) return;
+    state.scannerMissing = false;
+    state.scannerWaiting = false;
+    $("scan-input").setAttribute("inputmode", "text"); // turn disconnect detection back on
     updateReady();
   }
 
@@ -560,18 +576,30 @@
     return Math.max(window.innerHeight, fullHeight) - vv.height > 150;
   }
 
+  let kbTimer = null;
   function updateReady() {
     const scan = $("scan-input");
-    if (currentScreen === "scan" && !modalOpen && document.activeElement === scan && softKeyboardUp()) {
-      state.scannerMissing = true;
-      scan.blur(); // put the on-screen keyboard away
+    const watching = currentScreen === "scan" && !modalOpen && document.activeElement === scan && !state.scannerWaiting;
+    if (watching && softKeyboardUp() && !kbTimer) {
+      // Confirm it's still up a moment later so a passing animation doesn't trigger it.
+      kbTimer = setTimeout(() => {
+        kbTimer = null;
+        if (currentScreen === "scan" && !modalOpen && document.activeElement === scan && !state.scannerWaiting && softKeyboardUp()) {
+          state.scannerMissing = true;
+          scan.blur(); // put the on-screen keyboard away
+        }
+        updateReady();
+      }, 350);
     }
     const focused = document.activeElement === scan;
     const missing = state.scannerMissing && !focused;
+    const waiting = state.scannerWaiting && focused;
     const tag = $("ready-tag");
-    tag.className = "ready-tag " + (missing ? "bad" : focused ? "on" : "off");
-    $("ready-text").textContent = missing ? "Scanner not connected" : focused ? "Scanner connected" : "Tap here if scans don't appear";
-    scan.classList.toggle("ready", focused);
+    tag.className = "ready-tag " + (missing ? "bad" : waiting ? "off" : focused ? "on" : "off");
+    $("ready-text").textContent = missing ? "Scanner not connected"
+      : waiting ? "Waiting for scanner: scan any barcode"
+      : focused ? "Scanner connected" : "Tap here if scans don't appear";
+    scan.classList.toggle("ready", focused && !waiting);
     scan.classList.toggle("missing", missing);
     const banner = $("btn-refocus");
     banner.classList.toggle("show", !focused && currentScreen === "scan" && !modalOpen);
@@ -931,7 +959,7 @@
     scan.addEventListener("focus", updateReady);
     scan.addEventListener("blur", () => setTimeout(updateReady, 0));
     scan.addEventListener("keydown", (e) => {
-      if (state.scannerMissing) state.scannerMissing = false;
+      if (/^\d$/.test(e.key)) scannerProvedConnected();
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         e.stopPropagation();
@@ -951,7 +979,7 @@
       if (modalOpen || currentScreen !== "scan") return;
       if (e.target === scan || e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
       if (/^\d$/.test(e.key)) {
-        if (state.scannerMissing) { state.scannerMissing = false; updateReady(); }
+        scannerProvedConnected();
         scan.value += e.key;
         e.preventDefault();
       } else if ((e.key === "Enter" || e.key === "Tab") && scan.value) {

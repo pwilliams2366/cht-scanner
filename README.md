@@ -18,4 +18,4 @@ In this prototype, the barcode list, store-specific parts, skipped barcodes and 
 saved count are stored on the iPad only. Back up the barcode list from
 Barcodes & Data → Save Barcode List.
 
-Version: Prototype 1 · v0.2.0 (adds Add Quantity and scanner-disconnect warning)
+Version: Prototype 1 · v0.2.1 (fixes scanner reconnect)
