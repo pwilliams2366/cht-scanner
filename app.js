@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.1.0";
+  const APP_VERSION = "Prototype 1 · v0.2.0";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -324,6 +324,8 @@
       inp.placeholder = input ? input.placeholder || "" : "";
       inp.setAttribute("inputmode", input && input.inputmode ? input.inputmode : "text");
       $("modal-err").textContent = "";
+      $("modal-hint").textContent = "";
+      inp.oninput = input && input.hint ? () => { $("modal-hint").textContent = input.hint(inp.value.trim()); } : null;
       const wrap = $("modal-buttons");
       wrap.innerHTML = "";
       let enterButton = null;
@@ -331,6 +333,7 @@
         $("overlay").classList.remove("show");
         modalOpen = false;
         inp.onkeydown = null;
+        inp.oninput = null;
         resolve(value);
       };
       buttons.forEach((b) => {
@@ -382,6 +385,8 @@
     mode: null,
     scope: null,
     last: null,
+    lastQty: 1,
+    scannerMissing: false,
     active: false,
     busy: false,
     lastReports: null,
@@ -400,6 +405,7 @@
       csv_modified: state.csvModified,
       csv_text: state.csvTextRaw,
       last_scanned_part: state.last,
+      last_qty: state.lastQty,
       counts,
       saved_at: Date.now(),
     });
@@ -512,7 +518,7 @@
       Object.assign(state, {
         inventory: inv, csvTextRaw: s.csv_text, csvName: s.csv_name, csvModified: s.csv_modified,
         storeName: s.store_name, mode: s.count_mode, scope: s.count_scope,
-        last: s.last_scanned_part || null, active: true,
+        last: s.last_scanned_part || null, lastQty: parseInt(s.last_qty, 10) || 1, active: true,
       });
       showScanning();
     } catch (e) {
@@ -531,21 +537,49 @@
     focusScan();
   }
 
-  function focusScan() {
+  function focusScan(userTap) {
     if (currentScreen !== "scan" || modalOpen) return;
+    if (userTap === true) state.scannerMissing = false; // re-check on every tap
     const inp = $("scan-input");
     inp.value = "";
     try { inp.focus({ preventScroll: true }); } catch (e) { inp.focus(); }
     updateReady();
   }
 
+  // iPad tells us a scanner (hardware keyboard) is missing by sliding up the
+  // on-screen keyboard when the scan box is active. Detect that and warn.
+  let fullHeight = 0;
+  function rememberFullHeight() {
+    const vv = window.visualViewport;
+    const a = document.activeElement;
+    if (vv && !(a && (a.tagName === "INPUT" || a.tagName === "SELECT"))) fullHeight = vv.height;
+  }
+  function softKeyboardUp() {
+    const vv = window.visualViewport;
+    if (!vv) return false;
+    return Math.max(window.innerHeight, fullHeight) - vv.height > 150;
+  }
+
   function updateReady() {
-    const focused = document.activeElement === $("scan-input");
+    const scan = $("scan-input");
+    if (currentScreen === "scan" && !modalOpen && document.activeElement === scan && softKeyboardUp()) {
+      state.scannerMissing = true;
+      scan.blur(); // put the on-screen keyboard away
+    }
+    const focused = document.activeElement === scan;
+    const missing = state.scannerMissing && !focused;
     const tag = $("ready-tag");
-    tag.className = "ready-tag " + (focused ? "on" : "off");
-    $("ready-text").textContent = focused ? "Scanner ready" : "Tap here if scans don't appear";
-    $("scan-input").classList.toggle("ready", focused);
-    $("btn-refocus").classList.toggle("show", !focused && currentScreen === "scan" && !modalOpen);
+    tag.className = "ready-tag " + (missing ? "bad" : focused ? "on" : "off");
+    $("ready-text").textContent = missing ? "Scanner not connected" : focused ? "Scanner connected" : "Tap here if scans don't appear";
+    scan.classList.toggle("ready", focused);
+    scan.classList.toggle("missing", missing);
+    const banner = $("btn-refocus");
+    banner.classList.toggle("show", !focused && currentScreen === "scan" && !modalOpen);
+    banner.classList.toggle("bad", missing);
+    banner.textContent = missing
+      ? "Scanner not connected. Turn the scanner on and check Bluetooth, then tap here."
+      : "Scanning paused. Tap here, then scan again.";
+    $("btn-add-qty").disabled = !state.last;
   }
 
   function setMessage(title, details, kind, html = false) {
@@ -668,23 +702,63 @@
 
       item.physical_count += 1;
       state.last = item.part_number;
+      state.lastQty = 1;
       saveSession();
-      const difference = item.physical_count - item.in_stock;
-      const value = difference * item.cost;
-      setMessage("Scan recorded",
-        `<div class="name">${escHtml(item.name || item.brand || "Inventory item")}</div>` +
-          `Part #: ${escHtml(item.part_number)} &nbsp;&nbsp; Brand: ${escHtml(item.brand || "—")} &nbsp;&nbsp; BIN: ${escHtml(item.bin || "—")}<br>` +
-          `Type: ${escHtml(item.part_type)} &nbsp;&nbsp; Tekmetric: ${fmtG(item.in_stock)} &nbsp;&nbsp; WIP: ${fmtG(item.wip)}<br>` +
-          `Physical count: <b>${item.physical_count}</b> &nbsp;&nbsp; Difference: ${signed(difference)}<br>` +
-          `Estimated value impact: ${money(value)}`,
-        "success", true);
-      $("stat-part").textContent = item.part_number;
-      $("stat-diff").textContent = signed(difference);
-      updateTotals();
+      showRecorded(item, "Scan recorded");
     } finally {
       state.busy = false;
       focusScan();
     }
+  }
+
+  function showRecorded(item, title) {
+    const difference = item.physical_count - item.in_stock;
+    const value = difference * item.cost;
+    setMessage(title,
+      `<div class="name">${escHtml(item.name || item.brand || "Inventory item")}</div>` +
+        `Part #: ${escHtml(item.part_number)} &nbsp;&nbsp; Brand: ${escHtml(item.brand || "—")} &nbsp;&nbsp; BIN: ${escHtml(item.bin || "—")}<br>` +
+        `Type: ${escHtml(item.part_type)} &nbsp;&nbsp; Tekmetric: ${fmtG(item.in_stock)} &nbsp;&nbsp; WIP: ${fmtG(item.wip)}<br>` +
+        `Physical count: <b>${item.physical_count}</b> &nbsp;&nbsp; Difference: ${signed(difference)}<br>` +
+        `Estimated value impact: ${money(value)}`,
+      "success", true);
+    $("stat-part").textContent = item.part_number;
+    $("stat-diff").textContent = signed(difference);
+    updateTotals();
+    updateReady();
+  }
+
+  async function addQuantity() {
+    const item = state.last && state.inventory.find(state.last);
+    if (!item) { await alertBox("Scan an item first", "Scan one of the items, then tap Add Quantity to add the rest."); return focusScan(); }
+    const now = item.physical_count;
+    const res = await modal({
+      title: "Add quantity",
+      html: true,
+      body:
+        `<div class="name" style="font-weight:800;color:var(--ink)">${escHtml(item.name || item.brand || "Inventory item")}</div>` +
+        `Part #: ${escHtml(item.part_number)}<br>Counted so far: <b>${now}</b><br><br>How many <b>more</b> of this item do you see?`,
+      input: {
+        placeholder: "How many more",
+        inputmode: "numeric",
+        hint: (v) => (/^\d+$/.test(v) && Number(v) > 0 ? `New total will be ${now + Number(v)}` : ""),
+      },
+      buttons: [
+        { label: "Cancel", value: "cancel" },
+        {
+          label: "Add", value: "ok", cls: "primary", enter: true, returnsInput: true,
+          validate: (v) => (!/^\d+$/.test(v) || Number(v) < 1 ? "Type a whole number, like 11."
+            : Number(v) > 999 ? "That's more than 999. Check the number." : null),
+        },
+      ],
+    });
+    if (!res || res.button !== "ok") return focusScan();
+    const n = Number(res.text);
+    item.physical_count += n;
+    state.last = item.part_number;
+    state.lastQty = n;
+    saveSession();
+    showRecorded(item, `Added ${n} more (total ${item.physical_count})`);
+    focusScan();
   }
 
   async function typeBarcode() {
@@ -705,11 +779,15 @@
     if (!state.last) { await alertBox("Nothing to undo", "There is no recent scan to undo."); return focusScan(); }
     const it = state.inventory.find(state.last);
     if (!it || it.physical_count <= 0) { await alertBox("Nothing to undo", "The last scanned item cannot be undone."); return focusScan(); }
-    it.physical_count -= 1;
+    const qty = Math.min(state.lastQty || 1, it.physical_count);
+    it.physical_count -= qty;
     state.last = null;
+    state.lastQty = 1;
     saveSession();
     const difference = it.physical_count - it.in_stock;
-    setMessage("Last scan undone", `Part #: ${it.part_number}\nPhysical count: ${it.physical_count}\nDifference: ${signed(difference)}`, "warning");
+    setMessage(qty > 1 ? `Last entry undone (${qty} removed)` : "Last scan undone",
+      `Part #: ${it.part_number}\nPhysical count: ${it.physical_count}\nDifference: ${signed(difference)}`, "warning");
+    updateReady();
     $("stat-part").textContent = it.part_number;
     $("stat-diff").textContent = signed(difference);
     updateTotals();
@@ -833,11 +911,12 @@
     $("file-csv").onchange = (e) => onCsvChosen(e.target.files[0]);
     $("btn-begin").onclick = beginCount;
     $("btn-undo").onclick = undoLast;
+    $("btn-add-qty").onclick = addQuantity;
     $("btn-pause").onclick = pauseCount;
     $("btn-finish").onclick = finishCount;
     $("btn-type-barcode").onclick = typeBarcode;
-    $("btn-refocus").onclick = focusScan;
-    $("ready-tag").onclick = focusScan;
+    $("btn-refocus").onclick = () => focusScan(true);
+    $("ready-tag").onclick = () => focusScan(true);
     $("btn-save-xlsx").onclick = () => state.lastReports && saveFile(state.lastReports.xlsxBlob, state.lastReports.xlsxName);
     $("btn-save-csv").onclick = () => state.lastReports && saveFile(state.lastReports.csvBlob, state.lastReports.csvName);
     $("btn-done-home").onclick = renderHome;
@@ -852,6 +931,7 @@
     scan.addEventListener("focus", updateReady);
     scan.addEventListener("blur", () => setTimeout(updateReady, 0));
     scan.addEventListener("keydown", (e) => {
+      if (state.scannerMissing) state.scannerMissing = false;
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         e.stopPropagation();
@@ -859,13 +939,19 @@
       }
     });
     // Tapping the scan card (not a button) puts the cursor back in the scan box
-    $("scan-card").addEventListener("click", (e) => { if (e.target.tagName !== "BUTTON") focusScan(); });
+    $("scan-card").addEventListener("click", (e) => { if (e.target.tagName !== "BUTTON") focusScan(true); });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", () => { rememberFullHeight(); setTimeout(updateReady, 60); });
+    }
+    window.addEventListener("orientationchange", () => { fullHeight = 0; setTimeout(rememberFullHeight, 400); });
+    rememberFullHeight();
 
     // Scanner keystrokes that arrive while nothing is focused still get counted
     document.addEventListener("keydown", (e) => {
       if (modalOpen || currentScreen !== "scan") return;
       if (e.target === scan || e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
       if (/^\d$/.test(e.key)) {
+        if (state.scannerMissing) { state.scannerMissing = false; updateReady(); }
         scan.value += e.key;
         e.preventDefault();
       } else if ((e.key === "Enter" || e.key === "Tab") && scan.value) {

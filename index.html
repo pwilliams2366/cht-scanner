@@ -78,6 +78,8 @@
   .ready-tag { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; padding: 6px 12px; border-radius: 20px; }
   .ready-tag.on { background: var(--green-bg); color: var(--green); }
   .ready-tag.off { background: var(--amber-bg); color: var(--amber); }
+  .ready-tag.bad { background: var(--red-bg); color: var(--red); }
+  .scanbox.missing { border-color: var(--red); background: #fff7f7; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
   .scan-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
   .msg { margin: 16px 0 10px; padding: 14px 16px; border-radius: 10px; font-size: 22px; font-weight: 800; }
@@ -90,6 +92,8 @@
   .linkbtn { background: none; color: #0f5a95; padding: 8px 4px; min-height: 0; font-weight: 600; text-decoration: underline; }
   .resume-banner { display: none; margin-top: 10px; width: 100%; background: var(--amber-bg); color: var(--amber); border: 2px dashed #d9a400; }
   .resume-banner.show { display: block; }
+  .resume-banner.bad { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+  .modal .hint { color: var(--green); font-weight: 700; margin-top: 10px; font-size: 20px; min-height: 1.2em; }
   .done-files { display: grid; gap: 10px; margin: 8px 0 22px; }
   .done-files div { overflow-wrap: anywhere; }
   .muted { color: var(--muted); }
@@ -191,7 +195,7 @@
         <span class="ready-tag off" id="ready-tag"><span class="dot"></span><span id="ready-text">Tap to start scanning</span></span>
         <button class="linkbtn" id="btn-type-barcode">Type a barcode</button>
       </div>
-      <input id="scan-input" class="scanbox" inputmode="none" autocomplete="off" autocorrect="off"
+      <input id="scan-input" class="scanbox" inputmode="text" autocomplete="off" autocorrect="off"
              autocapitalize="off" spellcheck="false" placeholder="Scan a barcode" aria-label="Barcode">
       <button class="resume-banner" id="btn-refocus">Scanning paused — tap here, then scan again</button>
       <div class="msg info" id="scan-msg">Ready to scan</div>
@@ -200,6 +204,7 @@
     <div class="row-buttons">
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <button class="secondary" id="btn-undo">Undo Last Scan</button>
+        <button class="secondary" id="btn-add-qty" disabled>Add Quantity</button>
         <button class="secondary" id="btn-pause">Pause and Save</button>
       </div>
       <button class="danger" id="btn-finish">Finish Count</button>
@@ -254,6 +259,7 @@
     <h2 id="modal-title"></h2>
     <div class="body" id="modal-body"></div>
     <input id="modal-input" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+    <div class="hint" id="modal-hint"></div>
     <div class="err" id="modal-err"></div>
     <div class="buttons" id="modal-buttons"></div>
   </div>
