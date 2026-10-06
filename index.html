@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CHT Scanner">
+<meta name="theme-color" content="#102f4f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<title>CHT Inventory Scanner</title>
+<style>
+  :root {
+    --navy: #102f4f; --navy-2: #17324d; --orange: #f36b21; --orange-dark: #d95713;
+    --bg: #eef3f7; --card: #ffffff; --ink: #102a43; --muted: #486581; --soft: #627d98;
+    --line: #d9e2ec; --green-bg: #e2f2ea; --green: #08783e; --amber-bg: #fff4d6; --amber: #8a5a00;
+    --red-bg: #fce4e4; --red: #b71c1c; --danger: #b42318;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 17px; -webkit-user-select: none; user-select: none;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .brand {
+    background: var(--navy); color: #fff; display: flex; justify-content: space-between; align-items: center;
+    padding: calc(14px + env(safe-area-inset-top)) 28px 14px; font-weight: 700; letter-spacing: .02em; font-size: 15px;
+  }
+  .brand img { width: 30px; height: 30px; border-radius: 7px; margin-right: 10px; vertical-align: middle; }
+  main { padding: 26px 32px 40px; max-width: 1180px; margin: 0 auto; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+  .step { display: inline-block; background: #fff0e0; color: #b94f00; font-weight: 700; font-size: 13px; padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; }
+  h1 { font-size: 32px; margin: 0 0 4px; color: var(--navy); }
+  .lead { color: var(--muted); margin: 0 0 22px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px; }
+  .hero { text-align: center; padding: 40px 24px; margin: 18px 0 26px; }
+  .hero .kicker { color: var(--soft); font-size: 13px; font-weight: 700; letter-spacing: .08em; }
+  .hero .big { font-size: 28px; font-weight: 800; margin: 10px 0 8px; }
+  .stack { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  button {
+    font: inherit; border: 0; border-radius: 12px; padding: 16px 26px; min-height: 56px; cursor: pointer;
+    font-weight: 700; touch-action: manipulation;
+  }
+  button:disabled { opacity: .45; }
+  .primary { background: var(--orange); color: #fff; }
+  .primary:active { background: var(--orange-dark); }
+  .secondary { background: #fff; color: var(--navy); border: 2px solid #c7d3df; }
+  .danger { background: var(--danger); color: #fff; }
+  .wide { width: min(440px, 100%); }
+  .status-line { text-align: center; color: var(--muted); margin-top: 22px; }
+  .form { display: grid; grid-template-columns: 170px 1fr; gap: 16px 20px; align-items: center; }
+  .form label { font-size: 13px; font-weight: 700; color: var(--soft); letter-spacing: .05em; text-transform: uppercase; }
+  select {
+    font: inherit; font-size: 18px; padding: 14px; border-radius: 10px; border: 2px solid #c7d3df; background: #fff;
+    width: 100%; color: var(--ink); -webkit-appearance: none; appearance: none;
+  }
+  .file-summary { margin: 18px 0 6px; color: var(--muted); line-height: 1.6; }
+  .file-summary b { color: var(--ink); }
+  .row-buttons { display: flex; justify-content: space-between; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+  .topline { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
+  .meta { color: var(--muted); font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; }
+  .stat { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .stat .t { font-size: 12px; font-weight: 700; color: var(--soft); letter-spacing: .06em; }
+  .stat .v { font-size: 28px; font-weight: 800; margin-top: 4px; overflow-wrap: anywhere; }
+  .scanbox {
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 30px; width: 100%; padding: 16px 18px;
+    border: 3px solid #9fb3c8; border-radius: 12px; background: #fff; color: var(--ink); outline: none;
+    -webkit-user-select: text; user-select: text;
+  }
+  .scanbox.ready { border-color: var(--green); box-shadow: 0 0 0 4px rgba(8,120,62,.12); }
+  .ready-tag { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; padding: 6px 12px; border-radius: 20px; }
+  .ready-tag.on { background: var(--green-bg); color: var(--green); }
+  .ready-tag.off { background: var(--amber-bg); color: var(--amber); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+  .scan-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .msg { margin: 16px 0 10px; padding: 14px 16px; border-radius: 10px; font-size: 22px; font-weight: 800; }
+  .msg.success { background: var(--green-bg); color: var(--green); }
+  .msg.warning { background: var(--amber-bg); color: var(--amber); }
+  .msg.error { background: var(--red-bg); color: var(--red); }
+  .msg.info { background: #e8f0f8; color: #0f5a95; }
+  .details { white-space: pre-line; font-size: 18px; line-height: 1.55; color: #334e68; min-height: 120px; }
+  .details .name { font-size: 22px; font-weight: 800; color: var(--ink); }
+  .linkbtn { background: none; color: #0f5a95; padding: 8px 4px; min-height: 0; font-weight: 600; text-decoration: underline; }
+  .resume-banner { display: none; margin-top: 10px; width: 100%; background: var(--amber-bg); color: var(--amber); border: 2px dashed #d9a400; }
+  .resume-banner.show { display: block; }
+  .done-files { display: grid; gap: 10px; margin: 8px 0 22px; }
+  .done-files div { overflow-wrap: anywhere; }
+  .muted { color: var(--muted); }
+  .small { font-size: 14px; }
+  .data-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+  .data-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  footer { text-align: center; color: #9fb3c8; font-size: 12px; margin: 24px 0 10px; }
+  /* Modal */
+  .overlay { position: fixed; inset: 0; background: rgba(16,42,67,.55); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .overlay.show { display: flex; }
+  .modal { background: #fff; border-radius: 16px; width: min(560px, 100%); padding: 26px; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+  .modal h2 { margin: 0 0 10px; font-size: 24px; color: var(--navy); }
+  .modal .body { white-space: pre-line; color: #334e68; line-height: 1.5; font-size: 18px; }
+  .modal .body .kv { display: grid; grid-template-columns: 90px 1fr; gap: 4px 12px; margin-top: 10px; white-space: normal; }
+  .modal .body .kv b { color: var(--soft); font-size: 14px; text-transform: uppercase; letter-spacing: .04em; }
+  .modal input {
+    font: inherit; font-size: 24px; width: 100%; margin-top: 16px; padding: 14px; border-radius: 10px;
+    border: 2px solid #9fb3c8; -webkit-user-select: text; user-select: text; text-transform: uppercase;
+  }
+  .modal .err { color: var(--red); font-weight: 700; margin-top: 10px; min-height: 1.4em; }
+  .modal .buttons { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+  @media (max-width: 760px) {
+    main { padding: 18px 16px 30px; }
+    .cards { grid-template-columns: repeat(2, 1fr); }
+    .form { grid-template-columns: 1fr; }
+    .data-grid { grid-template-columns: 1fr; }
+    h1 { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+<div class="brand">
+  <span><img src="icon-192.png" alt="">CHAPEL HILL TIRE &nbsp;•&nbsp; INVENTORY OPERATIONS</span>
+  <span>Inventory Scanner</span>
+</div>
+
+<main>
+  <!-- HOME -->
+  <section id="screen-home" class="screen">
+    <div class="card hero">
+      <div class="kicker">FAST • ACCURATE • AUDIT-READY</div>
+      <div class="big">Inventory counting made simple</div>
+      <div class="muted">Choose a count, scan continuously, and get the Excel report when you finish.</div>
+    </div>
+    <div class="stack">
+      <button class="primary wide" id="btn-start">Start New Inventory Count</button>
+      <button class="secondary wide" id="btn-resume">Resume Saved Count</button>
+      <button class="secondary wide" id="btn-last-report">Save Last Report Again</button>
+      <button class="secondary wide" id="btn-data">Barcodes &amp; Data</button>
+    </div>
+    <div class="status-line" id="home-status"></div>
+  </section>
+
+  <!-- SETUP -->
+  <section id="screen-setup" class="screen">
+    <div class="step">STEP 1 OF 3 • COUNT SETUP</div>
+    <h1>Set Up Inventory Count</h1>
+    <p class="lead">Choose the store and its latest Tekmetric inventory CSV before scanning.</p>
+    <div class="card">
+      <div class="form">
+        <label for="sel-store">Store</label>
+        <select id="sel-store"></select>
+        <label>Inventory CSV</label>
+        <div>
+          <button class="secondary" id="btn-choose-csv">Choose Inventory CSV</button>
+          <input type="file" id="file-csv" accept=".csv,text/csv,text/comma-separated-values" hidden>
+          <div class="muted small" id="csv-name" style="margin-top:8px">No file selected</div>
+        </div>
+        <label for="sel-mode">Count type</label>
+        <select id="sel-mode"></select>
+        <label for="sel-scope">Inventory scope</label>
+        <select id="sel-scope"></select>
+      </div>
+    </div>
+    <div class="file-summary" id="file-summary"></div>
+    <div class="row-buttons">
+      <button class="secondary" id="btn-setup-back">Back</button>
+      <button class="primary" id="btn-begin" disabled>Start Scanning</button>
+    </div>
+  </section>
+
+  <!-- SCANNING -->
+  <section id="screen-scan" class="screen">
+    <div class="topline">
+      <div>
+        <div class="step">STEP 2 OF 3 • SCANNING</div>
+        <h1>Inventory Count</h1>
+      </div>
+      <div class="meta" id="scan-meta"></div>
+    </div>
+    <div class="cards">
+      <div class="stat"><div class="t">ITEMS SCANNED</div><div class="v" id="stat-total">0</div></div>
+      <div class="stat"><div class="t">PRODUCTS</div><div class="v" id="stat-unique">0</div></div>
+      <div class="stat"><div class="t">LAST PART</div><div class="v" id="stat-part">—</div></div>
+      <div class="stat"><div class="t">DIFFERENCE</div><div class="v" id="stat-diff">—</div></div>
+    </div>
+    <div class="card" id="scan-card">
+      <div class="scan-head">
+        <span class="ready-tag off" id="ready-tag"><span class="dot"></span><span id="ready-text">Tap to start scanning</span></span>
+        <button class="linkbtn" id="btn-type-barcode">Type a barcode</button>
+      </div>
+      <input id="scan-input" class="scanbox" inputmode="none" autocomplete="off" autocorrect="off"
+             autocapitalize="off" spellcheck="false" placeholder="Scan a barcode" aria-label="Barcode">
+      <button class="resume-banner" id="btn-refocus">Scanning paused — tap here, then scan again</button>
+      <div class="msg info" id="scan-msg">Ready to scan</div>
+      <div class="details" id="scan-details">The scanned item will appear here.</div>
+    </div>
+    <div class="row-buttons">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <button class="secondary" id="btn-undo">Undo Last Scan</button>
+        <button class="secondary" id="btn-pause">Pause and Save</button>
+      </div>
+      <button class="danger" id="btn-finish">Finish Count</button>
+    </div>
+  </section>
+
+  <!-- COMPLETE -->
+  <section id="screen-done" class="screen">
+    <div class="step">STEP 3 OF 3 • COMPLETE</div>
+    <h1>Inventory Count Complete</h1>
+    <p class="lead">Save both reports to the Files app (or share them) before leaving this screen.</p>
+    <div class="card">
+      <div class="done-files">
+        <div><div class="muted small">EXCEL REPORT</div><b id="done-xlsx"></b></div>
+        <div><div class="muted small">CSV REPORT</div><span id="done-csv"></span></div>
+      </div>
+      <div class="data-actions">
+        <button class="primary" id="btn-save-xlsx">Save Excel Report</button>
+        <button class="secondary" id="btn-save-csv">Save CSV Report</button>
+      </div>
+    </div>
+    <div class="row-buttons"><span></span><button class="secondary" id="btn-done-home">Return to Start</button></div>
+  </section>
+
+  <!-- DATA -->
+  <section id="screen-data" class="screen">
+    <h1>Barcodes &amp; Data</h1>
+    <p class="lead">Everything here is stored on this iPad only. The shared, all-store barcode list comes in the next version.</p>
+    <div class="data-grid">
+      <div class="stat"><div class="t">BARCODES IN LIST</div><div class="v" id="data-master">0</div></div>
+      <div class="stat"><div class="t">STORE-SPECIFIC PARTS</div><div class="v" id="data-alt">0</div></div>
+      <div class="stat"><div class="t">SKIPPED BARCODES</div><div class="v" id="data-unknown">0</div></div>
+    </div>
+    <div class="card">
+      <p style="margin-top:0"><b>Import a barcode_master.csv</b> from the Windows app. Barcodes already on this iPad are kept; any barcode that points to a different part is reported, not overwritten.</p>
+      <div class="data-actions">
+        <button class="primary" id="btn-import-master">Import barcode_master.csv</button>
+        <input type="file" id="file-master" accept=".csv,text/csv,text/comma-separated-values" hidden>
+        <button class="secondary" id="btn-export-master">Save Barcode List</button>
+        <button class="secondary" id="btn-export-alt">Save Store-Specific Parts</button>
+        <button class="secondary" id="btn-export-unknown">Save Skipped Barcodes</button>
+      </div>
+    </div>
+    <div class="row-buttons"><button class="secondary" id="btn-data-back">Back</button></div>
+  </section>
+
+  <footer id="version"></footer>
+</main>
+
+<div class="overlay" id="overlay" role="dialog" aria-modal="true">
+  <div class="modal">
+    <h2 id="modal-title"></h2>
+    <div class="body" id="modal-body"></div>
+    <input id="modal-input" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+    <div class="err" id="modal-err"></div>
+    <div class="buttons" id="modal-buttons"></div>
+  </div>
+</div>
+
+<script src="xlsx.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
