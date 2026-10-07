@@ -105,7 +105,7 @@
   const NAVY = "FF17324D", BLUE = "FFDCEAF7", GREEN = "FFE2F2EA", RED = "FFFCE4E4", WHITE = "FFFFFFFF";
   const NUM = 164, CUR = 165;
   // cellXfs indexes
-  const S = { normal: 0, header: 1, title: 2, bold: 3, num: 4, cur: 5, note: 6 };
+  const S = { normal: 0, header: 1, title: 2, bold: 3, num: 4, cur: 5, note: 6, group: 7, boldNum: 8, done: 9 };
 
   const STYLES_XML =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -120,15 +120,17 @@
     `<font><b/><sz val="16"/><color rgb="${WHITE}"/><name val="Calibri"/><family val="2"/></font>` +
     '<font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font>' +
     "</fonts>" +
-    '<fills count="4">' +
+    '<fills count="5">' +
     '<fill><patternFill patternType="none"/></fill>' +
     '<fill><patternFill patternType="gray125"/></fill>' +
     `<fill><patternFill patternType="solid"><fgColor rgb="${NAVY}"/><bgColor indexed="64"/></patternFill></fill>` +
     `<fill><patternFill patternType="solid"><fgColor rgb="${BLUE}"/><bgColor indexed="64"/></patternFill></fill>` +
+    `<fill><patternFill patternType="solid"><fgColor rgb="FFFFF4D6"/><bgColor indexed="64"/></patternFill></fill>` +
     "</fills>" +
-    '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+    '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>' +
+    '<border><left style="thin"><color rgb="FF9FB3C8"/></left><right style="thin"><color rgb="FF9FB3C8"/></right><top style="thin"><color rgb="FF9FB3C8"/></top><bottom style="thin"><color rgb="FF9FB3C8"/></bottom><diagonal/></border></borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-    '<cellXfs count="7">' +
+    '<cellXfs count="10">' +
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
     '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
     '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
@@ -136,6 +138,9 @@
     `<xf numFmtId="${NUM}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
     `<xf numFmtId="${CUR}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
     '<xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>' +
+    '<xf numFmtId="0" fontId="3" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+    '<xf numFmtId="0" fontId="3" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>' +
     "</cellXfs>" +
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
     '<dxfs count="2">' +
@@ -162,7 +167,11 @@
       const key = r + "," + c;
       const cell = this.cells.get(key) || {};
       if (value !== undefined) {
-        if (typeof value === "string" && value.startsWith("=")) {
+        if (value && typeof value === "object" && "f" in value) {
+          cell.f = value.f.replace(/^=/, "");
+          cell.cv = value.v;
+          cell.v = undefined;
+        } else if (typeof value === "string" && value.startsWith("=")) {
           cell.f = value.slice(1);
           cell.v = undefined;
         } else {
@@ -221,7 +230,10 @@
           const ref = colLetter(c) + r;
           const s = cell.s ? ` s="${cell.s}"` : "";
           if (cell.f !== undefined) {
-            parts.push(`<c r="${ref}"${s}><f>${esc(cell.f)}</f></c>`);
+            const cv = cell.cv;
+            if (typeof cv === "number" && isFinite(cv)) parts.push(`<c r="${ref}"${s}><f>${esc(cell.f)}</f><v>${cv}</v></c>`);
+            else if (typeof cv === "string") parts.push(`<c r="${ref}"${s} t="str"><f>${esc(cell.f)}</f><v>${esc(cv)}</v></c>`);
+            else parts.push(`<c r="${ref}"${s}><f>${esc(cell.f)}</f></c>`);
           } else if (typeof cell.v === "number" && isFinite(cell.v)) {
             parts.push(`<c r="${ref}"${s}><v>${cell.v}</v></c>`);
           } else if (typeof cell.v === "boolean") {
@@ -315,6 +327,7 @@
       for (let r = 1; r <= sheet.maxRow; r++) {
         const cell = sheet.get(r, c);
         if (!cell) continue;
+        if (cell.noFit) continue;
         const val = cell.f !== undefined ? "=" + cell.f : cell.v;
         width = Math.max(width, pyLen(val, intCols.has(c)));
       }
@@ -336,16 +349,23 @@
     ];
     details.appendRow(detailHeaders, S.header);
 
+    const calc = rows.map((row) => {
+      const diff = row.included ? row.physical_count - row.in_stock : "";
+      const impact = row.included ? diff * row.cost : 0;
+      // Excel treats "" in O as text: comparisons with numbers make it greater than any number
+      const status = !row.included ? "EXCLUDED" : diff < 0 ? "SHORT" : diff > 0 ? "OVER" : "MATCH";
+      return { diff, impact, status };
+    });
     rows.forEach((row, i) => {
-      const n = i + 2;
+      const n = i + 2, k = calc[i];
       details.appendRow([
         row.store, row.count_timestamp, row.part_number, row.name, row.brand, row.bin,
         row.part_type, row.count_scope, row.included ? "Yes" : "No", row.in_stock, row.wip,
         row.available, row.net, row.physical_count,
-        `=IF(I${n}="Yes",N${n}-J${n},"")`,
+        { f: `=IF(I${n}="Yes",N${n}-J${n},"")`, v: k.diff },
         row.cost, row.retail,
-        `=IF(I${n}="Yes",O${n}*P${n},0)`,
-        `=IF(I${n}="No","EXCLUDED",IF(O${n}<0,"SHORT",IF(O${n}>0,"OVER","MATCH")))`,
+        { f: `=IF(I${n}="Yes",O${n}*P${n},0)`, v: k.impact },
+        { f: `=IF(I${n}="No","EXCLUDED",IF(O${n}<0,"SHORT",IF(O${n}>0,"OVER","MATCH")))`, v: k.status },
         row.note,
       ]);
     });
@@ -374,24 +394,26 @@
         summary.set(3 + i, 2, value);
       });
     const L = last;
+    const inc = rows.map((r, i) => [r, calc[i]]).filter(([r]) => r.included);
+    const sum = (a) => a.reduce((x, y) => x + y, 0);
     const metrics = [
-      ["Physical items counted", `=SUMIF('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L})`],
-      ["Products physically counted", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L},">0")`],
-      ["Differences", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<>0")`],
-      ["Increased", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},">0")`],
-      ["Decreased", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<0")`],
-      ["Excluded records", `=COUNTIF('Count Details'!I2:I${L},"No")`],
-      ["Records with WIP", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!K2:K${L},">0")`],
-      ["Positive value impact", `=SUMIF('Count Details'!R2:R${L},">0",'Count Details'!R2:R${L})`],
-      ["Negative value impact", `=SUMIF('Count Details'!R2:R${L},"<0",'Count Details'!R2:R${L})`],
-      ["Net value change", `=SUM('Count Details'!R2:R${L})`],
+      ["Physical items counted", `=SUMIF('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L})`, sum(inc.map(([r]) => r.physical_count))],
+      ["Products physically counted", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L},">0")`, inc.filter(([r]) => r.physical_count > 0).length],
+      ["Differences", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<>0")`, inc.filter(([, k]) => k.diff !== 0).length],
+      ["Increased", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},">0")`, inc.filter(([, k]) => k.diff > 0).length],
+      ["Decreased", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<0")`, inc.filter(([, k]) => k.diff < 0).length],
+      ["Excluded records", `=COUNTIF('Count Details'!I2:I${L},"No")`, rows.length - inc.length],
+      ["Records with WIP", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!K2:K${L},">0")`, inc.filter(([r]) => r.wip > 0).length],
+      ["Positive value impact", `=SUMIF('Count Details'!R2:R${L},">0",'Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact).filter((v) => v > 0))],
+      ["Negative value impact", `=SUMIF('Count Details'!R2:R${L},"<0",'Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact).filter((v) => v < 0))],
+      ["Net value change", `=SUM('Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact))],
     ];
     summary.set(8, 1, "Metric", S.header);
     summary.set(8, 2, "Result", S.header);
-    metrics.forEach(([label, formula], i) => {
+    metrics.forEach(([label, formula, value], i) => {
       const r = 9 + i;
       summary.set(r, 1, label);
-      summary.set(r, 2, formula, label.toLowerCase().includes("value") ? S.cur : undefined);
+      summary.set(r, 2, { f: formula, v: value }, label.toLowerCase().includes("value") ? S.cur : undefined);
     });
     summary.set(20, 1, "Important", S.bold);
     summary.set(
@@ -424,13 +446,102 @@
     exceptions.autoFilter = `A1:K${Math.max(exceptions.maxRow, 2)}`;
     exceptions.gridLines = false;
 
+    const changes = buildChangesSheet(rows, storeName, countTimestamp, countMode);
+
     fitColumns(summary, 10, 42);
     fitColumns(details, 10, 34, new Set([14]));
     fitColumns(exceptions, 10, 34, new Set([7]));
     summary.widths[1] = 30;
     summary.widths[2] = 24;
 
-    return buildWorkbook([summary, details, exceptions]);
+    return buildWorkbook([summary, changes, details, exceptions]);
+  }
+
+  // ---------- "Tekmetric Changes" worksheet ----------
+  // Shelf areas, in the order a technician would work through them.
+  const AREAS = [
+    { name: "Tires", test: (r) => /^tire$/i.test(r.part_type) },
+    { name: "Oil Filters & Drain Plugs", bins: ["OLF"] },
+    { name: "Air & Cabin Filters", bins: ["AF"] },
+    { name: "Motor Oil (Bottles & Bulk)", bins: ["OSYN", "OSB", "OMOB", "OD", "FLUID", "GOIL"] },
+    { name: "Transmission Fluids", bins: ["TRN", "OTRAN"] },
+    { name: "Chemicals & BG Products", bins: ["CH", "SS"] },
+    { name: "A/C", bins: ["AC"] },
+    { name: "Wiper Blades", bins: ["WWB"] },
+    { name: "Bulbs", bins: ["BLB"] },
+    { name: "Batteries & Battery Parts", bins: ["BAT", "BATMI"], test: (r) => /^battery$/i.test(r.part_type) },
+    { name: "Brakes, Steering & Suspension", bins: ["BRA", "CHA", "SUSP", "BK"] },
+    { name: "Non-Stock Items (fees, credits) – check before changing", bins: ["TWC", "UNI", "VR"],
+      test: (r) => /\b(SHIPPING|DELIVERY CHARGE|WARRANTY CREDIT|REBATE|UNIFORMS?)\b/i.test(r.name || "") },
+    { name: "Other Parts (by BIN)", other: true },
+  ];
+  function areaIndex(row) {
+    const bin = String(row.bin || "").trim().toUpperCase();
+    const nonStock = AREAS.length - 2;
+    if (AREAS[nonStock].test(row) || AREAS[nonStock].bins.includes(bin)) return nonStock;
+    for (let i = 0; i < AREAS.length; i++) {
+      const a = AREAS[i];
+      if (a.other) return i;
+      if ((a.test && a.test(row)) || (a.bins && a.bins.includes(bin))) return i;
+    }
+    return AREAS.length - 1;
+  }
+  const round2 = (x) => Math.round(x * 100) / 100;
+
+  function buildChangesSheet(rows, storeName, countTimestamp, countMode) {
+    const ws = new Sheet("Tekmetric Changes");
+    const items = rows
+      .filter((r) => r.included && round2(r.physical_count - r.in_stock) !== 0)
+      .map((r) => ({ r, area: areaIndex(r), diff: round2(r.physical_count - r.in_stock) }));
+    items.sort((a, b) =>
+      a.area - b.area ||
+      String(a.r.bin || "~").localeCompare(String(b.r.bin || "~")) ||
+      String(a.r.part_number).localeCompare(String(b.r.part_number), undefined, { numeric: true }));
+
+    ws.set(1, 1, `Tekmetric Changes – ${storeName}`, S.bold);
+    ws.set(2, 1, `Counted ${countTimestamp} (${countMode}). ${items.length} parts need their Tekmetric quantity changed. ` +
+      'Type the number in "Set Tekmetric To" for each part, then mark Done.');
+    const head = ["BIN#", "Part Number", "Description", "Tekmetric Qty", "Counted", "Difference", "Set Tekmetric To", "Status", "Note", "Done"];
+    const H = 4;
+    head.forEach((h, i) => ws.set(H, i + 1, h, S.header));
+    let r = H;
+    let currentArea = -1;
+    for (const it of items) {
+      if (it.area !== currentArea) {
+        currentArea = it.area;
+        const count = items.filter((x) => x.area === currentArea).length;
+        r++;
+        ws.set(r, 1, `${AREAS[currentArea].name.toUpperCase()}  (${count})`, S.group);
+        for (let c = 2; c <= head.length; c++) ws.style(r, c, S.group);
+        ws.get(r, 1).noFit = true;
+      }
+      const row = it.r;
+      const desc = [row.brand, row.name].filter(Boolean).join(" – ") || "—";
+      let note = "";
+      if (row.physical_count === 0 && row.in_stock > 0) note = "Not scanned – confirm it's really gone before setting to 0";
+      else if (row.wip !== 0) note = "Has WIP – check the open repair order first";
+      r++;
+      ws.set(r, 1, row.bin || "");
+      ws.set(r, 2, row.part_number);
+      ws.set(r, 3, desc);
+      ws.set(r, 4, round2(row.in_stock));
+      ws.set(r, 5, round2(row.physical_count));
+      ws.set(r, 6, it.diff);
+      ws.set(r, 7, round2(row.physical_count), S.boldNum);
+      ws.set(r, 8, it.diff < 0 ? "SHORT" : "OVER");
+      ws.set(r, 9, note);
+      ws.set(r, 10, "", S.done);
+    }
+    if (!items.length) ws.set(H + 1, 1, "No changes needed – every counted part matches Tekmetric.");
+    ws.freeze = H + 1;
+    ws.gridLines = true;
+    ws.condFormats.push({ ref: `F${H + 1}:F${Math.max(r, H + 1)}`, rules: [{ op: "lessThan", value: "0", dxf: 0 }] });
+    ws.condFormats.push({ ref: `F${H + 1}:F${Math.max(r, H + 1)}`, rules: [{ op: "greaterThan", value: "0", dxf: 1 }] });
+    ws.get(1, 1).noFit = true;
+    ws.get(2, 1).noFit = true;
+    fitColumns(ws, 8, 46);
+    ws.widths[10] = 8;
+    return ws;
   }
 
   global.CHTXlsx = { buildInventoryReport, Sheet, buildWorkbook, zip, crc32 };

@@ -10,6 +10,7 @@ as the Windows app.
 | index.html | The screens and styling |
 | app.js | Counting logic (matches the Windows app) |
 | xlsx.js | Builds the Excel report (no internet needed) |
+| barcode.js | Draws the barcode labels for bulk tanks |
 | sw.js, manifest.webmanifest | Offline support and Home Screen app settings |
 | icon-*.png, apple-touch-icon.png | App icons |
 
@@ -18,4 +19,4 @@ In this prototype, the barcode list, store-specific parts, skipped barcodes and 
 saved count are stored on the iPad only. Back up the barcode list from
 Barcodes & Data → Save Barcode List.
 
-Version: Prototype 1 · v0.2.1 (fixes scanner reconnect)
+Version: Prototype 1 · v0.3.0 (bulk tanks, Tekmetric Changes page)

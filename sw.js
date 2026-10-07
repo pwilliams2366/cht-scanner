@@ -1,7 +1,7 @@
 // Offline support: always try the network first (so updates show up on refresh),
 // fall back to the saved copy when there is no connection.
-const CACHE = "cht-scanner-v0.2.1";
-const FILES = ["./", "./index.html", "./app.js", "./xlsx.js", "./manifest.webmanifest",
+const CACHE = "cht-scanner-v0.3.0";
+const FILES = ["./", "./index.html", "./app.js", "./xlsx.js", "./barcode.js", "./manifest.webmanifest",
   "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

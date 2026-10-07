@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.2.1";
+  const APP_VERSION = "Prototype 1 · v0.3.0";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -38,6 +38,7 @@
     unknown: "cht.unknown.v1",
     session: "cht.session.v1",
     lastReport: "cht.lastReport.v1",
+    tanks: "cht.tanks.v1",
   };
 
   // ---------------- Storage ----------------
@@ -202,6 +203,29 @@
       if (!store(KEYS.storeAlt, all)) throw new Error("The store-specific part could not be saved (storage full).");
     },
   };
+
+  // ---------------- Bulk tanks (oil and fluids measured by gauge) ----------------
+  // Each tank gets its own printable barcode: "29" + store number + "0000" + tank number.
+  // Barcodes starting with 2 are reserved for in-store use, so they never clash with products.
+  const r2 = (x) => Math.round(x * 100) / 100;
+  const Tanks = {
+    all() { return load(KEYS.tanks, []); },
+    save(list) { if (!store(KEYS.tanks, list)) throw new Error("Tanks could not be saved on this iPad (storage full)."); },
+    byCode(code) { return this.all().find((t) => t.code === code) || null; },
+    forStore(storeName) { return this.all().filter((t) => t.store === storeName); },
+    nextCode(storeName) {
+      const storeNo = String(STORES.indexOf(storeName) + 1).padStart(2, "0");
+      const seq = this.all().reduce((m, t) => Math.max(m, Number(t.code.slice(-4)) || 0), 0) + 1;
+      return `29${storeNo}0000${String(seq).padStart(4, "0")}`;
+    },
+    add(t) {
+      const list = this.all();
+      list.push(t);
+      this.save(list);
+    },
+    remove(code) { this.save(this.all().filter((t) => t.code !== code)); },
+  };
+  const unitWord = (u, n) => (u === "GAL" ? (n === 1 ? "gallon" : "gallons") : (n === 1 ? "quart" : "quarts"));
 
   function logSkipped(barcode, storeName, note) {
     const list = load(KEYS.unknown, []);
@@ -386,6 +410,8 @@
     scope: null,
     last: null,
     lastQty: 1,
+    lastTank: null,
+    tankReadings: {},
     scannerMissing: false,
     scannerWaiting: false,
     active: false,
@@ -407,6 +433,8 @@
       csv_text: state.csvTextRaw,
       last_scanned_part: state.last,
       last_qty: state.lastQty,
+      last_tank: state.lastTank,
+      tank_readings: state.tankReadings,
       counts,
       saved_at: Date.now(),
     });
@@ -501,6 +529,9 @@
     state.scope = SCOPES[$("sel-scope").value];
     for (const it of state.inventory.items.values()) it.physical_count = 0;
     state.last = null;
+    state.lastQty = 1;
+    state.lastTank = null;
+    state.tankReadings = {};
     state.active = true;
     if (!saveSession()) return;
     showScanning();
@@ -514,12 +545,13 @@
       inv.load(s.csv_text);
       for (const [part, count] of Object.entries(s.counts || {})) {
         const it = inv.find(part);
-        if (it) it.physical_count = parseInt(count, 10) || 0;
+        if (it) it.physical_count = parseFloat(count) || 0;
       }
       Object.assign(state, {
         inventory: inv, csvTextRaw: s.csv_text, csvName: s.csv_name, csvModified: s.csv_modified,
         storeName: s.store_name, mode: s.count_mode, scope: s.count_scope,
-        last: s.last_scanned_part || null, lastQty: parseInt(s.last_qty, 10) || 1, active: true,
+        last: s.last_scanned_part || null, lastQty: parseFloat(s.last_qty) || 1, active: true,
+        lastTank: s.last_tank || null, tankReadings: s.tank_readings || {},
       });
       showScanning();
     } catch (e) {
@@ -607,7 +639,7 @@
     banner.textContent = missing
       ? "Scanner not connected. Turn the scanner on and check Bluetooth, then tap here."
       : "Scanning paused. Tap here, then scan again.";
-    $("btn-add-qty").disabled = !state.last;
+    $("btn-add-qty").disabled = !state.last || !!state.lastTank;
   }
 
   function setMessage(title, details, kind, html = false) {
@@ -708,6 +740,8 @@
     }
     state.busy = true;
     try {
+      const tank = Tanks.byCode(barcode);
+      if (tank) { await measureTank(tank); return; }
       let item = null;
       const storePart = Barcodes.storeAlt(state.storeName, barcode);
       if (storePart) item = state.inventory.find(storePart);
@@ -731,6 +765,7 @@
       item.physical_count += 1;
       state.last = item.part_number;
       state.lastQty = 1;
+      state.lastTank = null;
       saveSession();
       showRecorded(item, "Scan recorded");
     } finally {
@@ -757,7 +792,7 @@
 
   async function addQuantity() {
     const item = state.last && state.inventory.find(state.last);
-    if (!item) { await alertBox("Scan an item first", "Scan one of the items, then tap Add Quantity to add the rest."); return focusScan(); }
+    if (!item || state.lastTank) { await alertBox("Scan an item first", "Scan one of the items, then tap Add Quantity to add the rest. (For bulk tanks, scan the tank again to replace the reading.)"); return focusScan(); }
     const now = item.physical_count;
     const res = await modal({
       title: "Add quantity",
@@ -784,8 +819,92 @@
     item.physical_count += n;
     state.last = item.part_number;
     state.lastQty = n;
+    state.lastTank = null;
     saveSession();
     showRecorded(item, `Added ${n} more (total ${item.physical_count})`);
+    focusScan();
+  }
+
+  async function measureTank(tank) {
+    if (tank.store !== state.storeName) {
+      setMessage("Tank belongs to another store",
+        `This label is for "${tank.name}" at ${tank.store}. You are counting ${state.storeName}.\nNothing was counted.`, "warning");
+      return;
+    }
+    const item = state.inventory.find(tank.part);
+    if (!item) {
+      await alertBox("Tank part not found",
+        `The tank "${tank.name}" is set up as part ${tank.part}, but that part is not in ${state.storeName}'s inventory file.\n\nCheck the part number in Barcodes & Data → Bulk Tanks.`);
+      return;
+    }
+    if (!inScope(item, state.scope)) {
+      setMessage("Item outside selected count scope", `Part #: ${item.part_number}    Type: ${item.part_type}\nThis tank was not counted.`, "warning");
+      return;
+    }
+    const prev = state.tankReadings[tank.code];
+    const u = tank.unit === "GAL" ? "GAL" : "QT";
+    if (prev !== undefined) {
+      const again = await confirmBox("Tank already measured",
+        `"${tank.name}" was already measured this count: ${fmtG(prev)} ${unitWord(u, prev)}.\n\nMeasure it again and replace that reading?`,
+        "Replace Reading", "Cancel");
+      if (!again) return;
+    }
+    const toUnit = (v, entered) => r2(u === "QT" ? (entered === "GAL" ? v * 4 : v) : (entered === "GAL" ? v : v / 4));
+    const valid = (v) => /^\d*\.?\d+$/.test(v) && Number(v) <= 10000;
+    const res = await modal({
+      title: "Bulk tank reading",
+      html: true,
+      body:
+        `<div class="name" style="font-weight:800;color:var(--ink)">${escHtml(tank.name)}</div>` +
+        `Part #: ${escHtml(item.part_number)} – ${escHtml(item.name || "")}<br>` +
+        `Tekmetric counts this in <b>${u === "QT" ? "quarts" : "gallons"}</b> (Tekmetric shows ${fmtG(item.in_stock)}).<br><br>` +
+        "Read the level on the tank, type it, then tap <b>Gallons</b> or <b>Quarts</b>.",
+      input: {
+        placeholder: "Amount on the tank gauge",
+        inputmode: "decimal",
+        hint: (v) => (valid(v)
+          ? `${fmtG(Number(v))} gallons = ${fmtG(toUnit(Number(v), "GAL"))} ${unitWord(u)}` +
+            (u === "QT" ? "" : `   •   ${fmtG(Number(v))} quarts = ${fmtG(toUnit(Number(v), "QT"))} gallons`)
+          : ""),
+      },
+      buttons: [
+        { label: "Cancel", value: "cancel" },
+        { label: "Quarts", value: "QT", returnsInput: true,
+          validate: (v) => (valid(v) ? null : "Type the amount, like 82.5") },
+        { label: "Gallons", value: "GAL", cls: "primary", enter: true, returnsInput: true,
+          validate: (v) => (valid(v) ? null : "Type the amount, like 82.5") },
+      ],
+    });
+    if (!res || typeof res !== "object") return; // Cancel
+    const entered = Number(res.text);
+    const amount = toUnit(entered, res.button);
+    const delta = r2(amount - (prev || 0));
+    item.physical_count = r2(item.physical_count + delta);
+    state.tankReadings[tank.code] = amount;
+    state.last = item.part_number;
+    state.lastQty = delta;
+    state.lastTank = { code: tank.code, prev: prev === undefined ? null : prev };
+    saveSession();
+    const shown = res.button === "GAL"
+      ? `${fmtG(entered)} gal = ${fmtG(amount)} ${unitWord(u, amount)}`
+      : `${fmtG(entered)} qt${u === "GAL" ? ` = ${fmtG(amount)} gal` : ""}`;
+    showRecorded(item, `${prev !== undefined ? "Tank re-measured" : "Tank measured"}: ${shown}`);
+  }
+
+  async function chooseTank() {
+    const tanks = Tanks.forStore(state.storeName);
+    if (!tanks.length) {
+      await alertBox("No bulk tanks set up",
+        `There are no bulk tanks set up for ${state.storeName} yet.\n\nAdd them in Barcodes & Data → Bulk Tanks.`);
+      return focusScan();
+    }
+    const code = await modal({
+      title: "Measure a bulk tank",
+      body: "Pick the tank you're reading:",
+      buttons: [{ label: "Cancel", value: null },
+        ...tanks.map((t) => ({ label: t.name + (state.tankReadings[t.code] !== undefined ? " ✓" : ""), value: t.code, cls: "secondary" }))],
+    });
+    if (code) await measureTank(Tanks.byCode(code));
     focusScan();
   }
 
@@ -806,6 +925,20 @@
   async function undoLast() {
     if (!state.last) { await alertBox("Nothing to undo", "There is no recent scan to undo."); return focusScan(); }
     const it = state.inventory.find(state.last);
+    if (it && state.lastTank) {
+      const t = state.lastTank;
+      it.physical_count = r2(it.physical_count - state.lastQty);
+      if (t.prev === null) delete state.tankReadings[t.code]; else state.tankReadings[t.code] = t.prev;
+      state.last = null; state.lastQty = 1; state.lastTank = null;
+      saveSession();
+      const d = it.physical_count - it.in_stock;
+      setMessage("Tank reading undone", `Part #: ${it.part_number}\nPhysical count: ${fmtG(it.physical_count)}\nDifference: ${signed(d)}`, "warning");
+      $("stat-part").textContent = it.part_number;
+      $("stat-diff").textContent = signed(d);
+      updateTotals();
+      updateReady();
+      return focusScan();
+    }
     if (!it || it.physical_count <= 0) { await alertBox("Nothing to undo", "The last scanned item cannot be undone."); return focusScan(); }
     const qty = Math.min(state.lastQty || 1, it.physical_count);
     it.physical_count -= qty;
@@ -883,6 +1016,7 @@
     $("data-master").textContent = Object.keys(Barcodes.master()).length.toLocaleString();
     $("data-alt").textContent = Object.values(alt).reduce((n, m) => n + Object.keys(m).length, 0).toLocaleString();
     $("data-unknown").textContent = load(KEYS.unknown, []).length.toLocaleString();
+    $("data-tanks").textContent = Tanks.all().length.toLocaleString();
     show("data");
   }
 
@@ -922,6 +1056,86 @@
     for (const [s, m] of Object.entries(load(KEYS.storeAlt, {}))) for (const [b, p] of Object.entries(m)) rows.push([s, b, p]);
     saveFile(new Blob([csvText(rows)], { type: "text/csv" }), "store_specific_parts.csv");
   }
+  function renderTanks() {
+    fillSelect("tank-store", STORES, $("tank-store").value || state.storeName || STORES[0]);
+    const list = Tanks.all();
+    const box = $("tank-list");
+    if (!list.length) {
+      box.innerHTML = '<p class="muted">No bulk tanks yet. Add one above, then print its label.</p>';
+    } else {
+      box.innerHTML = STORES.filter((st) => list.some((t) => t.store === st)).map((st) =>
+        `<h3 style="margin:18px 0 8px;color:var(--navy)">${escHtml(st)}</h3>` +
+        list.filter((t) => t.store === st).map((t) =>
+          `<div class="tank-row"><div><b>${escHtml(t.name)}</b><br><span class="muted small">Part ${escHtml(t.part)} • counted in ${t.unit === "GAL" ? "gallons" : "quarts"} • code ${t.code}</span></div>` +
+          `<button class="secondary" data-remove="${t.code}">Remove</button></div>`).join("")).join("");
+    }
+    box.querySelectorAll("[data-remove]").forEach((b) => {
+      b.onclick = async () => {
+        const t = Tanks.byCode(b.dataset.remove);
+        if (await confirmBox("Remove tank?", `Remove "${t.name}" at ${t.store}? Its printed label will stop working.`, "Remove", "Keep")) {
+          Tanks.remove(t.code);
+          renderTanks();
+        }
+      };
+    });
+    $("tank-count").textContent = `${list.length} tank${list.length === 1 ? "" : "s"}`;
+    show("tanks");
+  }
+
+  async function addTank() {
+    const storeName = $("tank-store").value;
+    const name = $("tank-name").value.trim();
+    const part = $("tank-part").value.trim();
+    const unit = $("tank-unit").value;
+    if (!name || !part) return alertBox("Missing information", "Give the tank a name (like \"5W-30 tank by bay 3\") and its Tekmetric part number.");
+    const code = Tanks.nextCode(storeName);
+    try { Tanks.add({ code, store: storeName, name, part, unit }); }
+    catch (e) { return alertBox("Not saved", e.message); }
+    $("tank-name").value = ""; $("tank-part").value = "";
+    renderTanks();
+  }
+
+  function printTankLabels() {
+    const storeName = $("tank-store").value;
+    const tanks = Tanks.forStore(storeName);
+    if (!tanks.length) return alertBox("No tanks to print", `There are no bulk tanks set up for ${storeName}.`);
+    $("print-area").innerHTML = tanks.map((t) =>
+      `<div class="label"><div class="label-kicker">CHAPEL HILL TIRE • BULK TANK</div>` +
+      `<div class="label-name">${escHtml(t.name)}</div>` +
+      `<div class="label-meta">Part ${escHtml(t.part)} • ${escHtml(t.store)}</div>` +
+      `<div class="label-code">${window.CHTBarcode.svg(t.code)}</div>` +
+      `<div class="label-digits">${t.code}</div>` +
+      `<div class="label-help">Scan, then enter the gallons shown on the tank gauge</div></div>`).join("");
+    window.print();
+  }
+
+  function exportTanks() {
+    const rows = [["Store", "Tank Name", "Part Number", "Tekmetric Unit", "Barcode"],
+      ...Tanks.all().map((t) => [t.store, t.name, t.part, t.unit, t.code])];
+    saveFile(new Blob([csvText(rows)], { type: "text/csv" }), "bulk_tanks.csv");
+  }
+
+  async function importTanks(file) {
+    if (!file) return;
+    try {
+      const { headers, records } = csvDicts(await file.text());
+      for (const h of ["Store", "Tank Name", "Part Number", "Tekmetric Unit", "Barcode"]) if (!headers.includes(h)) throw new Error(`Missing column: ${h}`);
+      const list = Tanks.all();
+      let added = 0;
+      for (const r of records) {
+        const code = clean(r["Barcode"]);
+        if (!/^29\d{10}$/.test(code) || list.some((t) => t.code === code)) continue;
+        list.push({ code, store: clean(r["Store"]), name: clean(r["Tank Name"]), part: clean(r["Part Number"]), unit: clean(r["Tekmetric Unit"]) === "GAL" ? "GAL" : "QT" });
+        added++;
+      }
+      Tanks.save(list);
+      await alertBox("Tanks imported", `${added} tank${added === 1 ? "" : "s"} added.`);
+    } catch (e) {
+      await alertBox("Import failed", e.message || String(e));
+    }
+    renderTanks();
+  }
+
   function exportUnknown() {
     const rows = [["Barcode", "Store", "Date/Time", "Note"], ...load(KEYS.unknown, [])];
     saveFile(new Blob([csvText(rows)], { type: "text/csv" }), "unknown_barcodes.csv");
@@ -954,6 +1168,15 @@
     $("btn-export-master").onclick = exportMaster;
     $("btn-export-alt").onclick = exportAlt;
     $("btn-export-unknown").onclick = exportUnknown;
+    $("btn-tanks").onclick = renderTanks;
+    $("btn-tanks-back").onclick = renderData;
+    $("btn-add-tank").onclick = addTank;
+    $("btn-print-tanks").onclick = printTankLabels;
+    $("tank-store").onchange = () => {};
+    $("btn-export-tanks").onclick = exportTanks;
+    $("btn-import-tanks").onclick = () => { $("file-tanks").value = ""; $("file-tanks").click(); };
+    $("file-tanks").onchange = (e) => importTanks(e.target.files[0]);
+    $("btn-measure-tank").onclick = chooseTank;
 
     const scan = $("scan-input");
     scan.addEventListener("focus", updateReady);
@@ -998,7 +1221,7 @@
   }
 
   // Expose a small test hook (harmless in production)
-  window.__cht = { state, Inventory, Barcodes, buildReports, parseCSV, KEYS };
+  window.__cht = { state, Inventory, Barcodes, Tanks, buildReports, parseCSV, KEYS };
 
   wire();
   renderHome();

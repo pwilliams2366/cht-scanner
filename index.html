@@ -115,6 +115,22 @@
   }
   .modal .err { color: var(--red); font-weight: 700; margin-top: 10px; min-height: 1.4em; }
   .modal .buttons { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+  .field { font: inherit; font-size: 18px; padding: 14px; border-radius: 10px; border: 2px solid #c7d3df; width: 100%; -webkit-user-select: text; user-select: text; }
+  .tank-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  #print-area { display: none; }
+  @media print {
+    @page { margin: 0.4in; }
+    body { background: #fff; padding: 0; }
+    body > *:not(#print-area) { display: none !important; }
+    #print-area { display: grid !important; grid-template-columns: 1fr 1fr; gap: 0.3in; }
+    .label { border: 2px solid #000; border-radius: 10px; padding: 14px; text-align: center; break-inside: avoid; color: #000; }
+    .label-kicker { font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+    .label-name { font-size: 20px; font-weight: 800; margin: 6px 0 2px; }
+    .label-meta { font-size: 12px; margin-bottom: 8px; }
+    .label-code svg { width: 100%; max-width: 3.2in; height: 0.9in; }
+    .label-digits { font-family: ui-monospace, Menlo, monospace; font-size: 14px; letter-spacing: .1em; }
+    .label-help { font-size: 10px; margin-top: 6px; }
+  }
   @media (max-width: 760px) {
     main { padding: 18px 16px 30px; }
     .cards { grid-template-columns: repeat(2, 1fr); }
@@ -205,6 +221,7 @@
       <div style="display:flex;gap:12px;flex-wrap:wrap">
         <button class="secondary" id="btn-undo">Undo Last Scan</button>
         <button class="secondary" id="btn-add-qty" disabled>Add Quantity</button>
+        <button class="secondary" id="btn-measure-tank">Measure Bulk Tank</button>
         <button class="secondary" id="btn-pause">Pause and Save</button>
       </div>
       <button class="danger" id="btn-finish">Finish Count</button>
@@ -238,6 +255,10 @@
       <div class="stat"><div class="t">STORE-SPECIFIC PARTS</div><div class="v" id="data-alt">0</div></div>
       <div class="stat"><div class="t">SKIPPED BARCODES</div><div class="v" id="data-unknown">0</div></div>
     </div>
+    <div class="card" style="margin-bottom:16px">
+      <p style="margin-top:0"><b>Bulk tanks</b> (oil and fluids in large containers): set up each tank once, print its barcode label, and stick it on the tank. During a count, scan the label and enter the gallons on the gauge. <span id="data-tanks">0</span> set up.</p>
+      <button class="primary" id="btn-tanks">Bulk Tanks</button>
+    </div>
     <div class="card">
       <p style="margin-top:0"><b>Import a barcode_master.csv</b> from the Windows app. Barcodes already on this iPad are kept; any barcode that points to a different part is reported, not overwritten.</p>
       <div class="data-actions">
@@ -251,8 +272,42 @@
     <div class="row-buttons"><button class="secondary" id="btn-data-back">Back</button></div>
   </section>
 
+  <!-- BULK TANKS -->
+  <section id="screen-tanks" class="screen">
+    <h1>Bulk Tanks</h1>
+    <p class="lead">Each tank gets its own barcode label. Scanning it during a count asks for the reading on the tank's gauge and converts gallons to quarts automatically.</p>
+    <div class="card">
+      <div class="form">
+        <label for="tank-store">Store</label>
+        <select id="tank-store"></select>
+        <label for="tank-name">Tank name</label>
+        <input id="tank-name" class="field" placeholder="Example: 5W-30 tank by bay 3" autocomplete="off">
+        <label for="tank-part">Tekmetric part #</label>
+        <input id="tank-part" class="field" placeholder="Example: 99COM530SY" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <label for="tank-unit">Tekmetric counts it in</label>
+        <select id="tank-unit"><option value="QT">Quarts (most oils, names end in "(QT)")</option><option value="GAL">Gallons</option></select>
+      </div>
+      <div class="data-actions" style="margin-top:18px">
+        <button class="primary" id="btn-add-tank">Add Tank</button>
+        <button class="secondary" id="btn-print-tanks">Print Labels for This Store</button>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="topline"><b>Tanks set up</b><span class="muted" id="tank-count"></span></div>
+      <div id="tank-list"></div>
+      <div class="data-actions" style="margin-top:16px">
+        <button class="secondary" id="btn-export-tanks">Save Tank List</button>
+        <button class="secondary" id="btn-import-tanks">Import Tank List</button>
+        <input type="file" id="file-tanks" accept=".csv,text/csv,text/comma-separated-values" hidden>
+      </div>
+    </div>
+    <div class="row-buttons"><button class="secondary" id="btn-tanks-back">Back</button></div>
+  </section>
+
   <footer id="version"></footer>
 </main>
+
+<div id="print-area"></div>
 
 <div class="overlay" id="overlay" role="dialog" aria-modal="true">
   <div class="modal">
@@ -265,6 +320,7 @@
   </div>
 </div>
 
+<script src="barcode.js"></script>
 <script src="xlsx.js"></script>
 <script src="app.js"></script>
 </body>
