@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.3.0";
+  const APP_VERSION = "Prototype 1 · v0.3.1";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -1095,18 +1095,15 @@
     renderTanks();
   }
 
-  function printTankLabels() {
+  async function printTankLabels() {
     const storeName = $("tank-store").value;
     const tanks = Tanks.forStore(storeName);
     if (!tanks.length) return alertBox("No tanks to print", `There are no bulk tanks set up for ${storeName}.`);
-    $("print-area").innerHTML = tanks.map((t) =>
-      `<div class="label"><div class="label-kicker">CHAPEL HILL TIRE • BULK TANK</div>` +
-      `<div class="label-name">${escHtml(t.name)}</div>` +
-      `<div class="label-meta">Part ${escHtml(t.part)} • ${escHtml(t.store)}</div>` +
-      `<div class="label-code">${window.CHTBarcode.svg(t.code)}</div>` +
-      `<div class="label-digits">${t.code}</div>` +
-      `<div class="label-help">Scan, then enter the gallons shown on the tank gauge</div></div>`).join("");
-    window.print();
+    let pdf;
+    try { pdf = window.CHTBarcode.labelsPdf(tanks); }
+    catch (e) { return alertBox("Labels could not be made", e.message || String(e)); }
+    // Opens the iPad share sheet: choose Print, Save to Files, or AirDrop.
+    await saveFile(pdf, `Tank_Labels_${storeName.replace(/ /g, "_")}.pdf`);
   }
 
   function exportTanks() {

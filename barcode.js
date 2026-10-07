@@ -24,5 +24,78 @@
     const total = x + quiet * moduleWidth;
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total.toFixed(2)} ${height}" width="${total.toFixed(0)}" height="${height}" shape-rendering="crispEdges" fill="#000">${rects}</svg>`;
   }
-  global.CHTBarcode = { modules, svg };
+  // ---- Printable label sheet as a PDF (iPad Home Screen apps can't use window.print) ----
+  function pdfText(str) {
+    return String(str).replace(/[^\x20-\x7E]/g, "-").replace(/([\\()])/g, "\\$1");
+  }
+  function clip(str, max) { str = String(str); return str.length > max ? str.slice(0, max - 1) + "." : str; }
+
+  function labelsPdf(tanks) {
+    const PW = 612, PH = 792, M = 36, GAP = 18, COLS = 2, ROWS = 4;
+    const LW = (PW - 2 * M - (COLS - 1) * GAP) / COLS;
+    const LH = (PH - 2 * M - (ROWS - 1) * GAP) / ROWS;
+    const perPage = COLS * ROWS;
+    const pages = [];
+    for (let i = 0; i < tanks.length; i += perPage) pages.push(tanks.slice(i, i + perPage));
+
+    const streams = pages.map((group) => {
+      let c = "";
+      group.forEach((t, k) => {
+        const col = k % COLS, row = Math.floor(k / COLS);
+        const x0 = M + col * (LW + GAP);
+        const yTop = PH - M - row * (LH + GAP);
+        const y0 = yTop - LH;
+        const pad = 12;
+        c += `1.5 w 0 0 0 RG ${x0.toFixed(2)} ${y0.toFixed(2)} ${LW.toFixed(2)} ${LH.toFixed(2)} re S\n`;
+        const txt = (font, size, x, y, str) => { c += `BT /${font} ${size} Tf ${x.toFixed(2)} ${y.toFixed(2)} Td (${pdfText(str)}) Tj ET\n`; };
+        txt("F2", 7.5, x0 + pad, yTop - 16, "CHAPEL HILL TIRE  -  BULK TANK");
+        txt("F2", 14, x0 + pad, yTop - 34, clip(t.name, 30));
+        txt("F1", 8.5, x0 + pad, yTop - 48, clip(`Part ${t.part}  -  ${t.store}`, 52));
+        // barcode
+        const widths = modules(t.code);
+        const total = [...widths].reduce((n, d) => n + Number(d), 0);
+        const mw = Math.min(2.0, (LW - 2 * pad - 20) / total);
+        const bh = 52;
+        let bx = x0 + (LW - total * mw) / 2;
+        const by = y0 + 34;
+        c += "0 0 0 rg\n";
+        for (let i = 0; i < widths.length; i++) {
+          const w = Number(widths[i]) * mw;
+          if (i % 2 === 0) c += `${bx.toFixed(3)} ${by.toFixed(2)} ${w.toFixed(3)} ${bh} re f\n`;
+          bx += w;
+        }
+        txt("F3", 11, x0 + (LW - t.code.length * 6.6) / 2, y0 + 21, t.code);
+        txt("F1", 7, x0 + pad, y0 + 8, "Scan, then enter the gallons shown on the tank gauge");
+      });
+      return c;
+    });
+
+    // Assemble PDF objects: 1 catalog, 2 pages, 3-5 fonts, then page/content pairs
+    const objs = [];
+    const pageIds = pages.map((_, i) => 6 + i * 2);
+    objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+    objs[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => id + " 0 R").join(" ")}] /Count ${pages.length} >>`;
+    objs[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+    objs[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+    objs[5] = "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>";
+    streams.forEach((st, i) => {
+      const pid = pageIds[i], cid = pid + 1;
+      objs[pid] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] ` +
+        `/Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >> /Contents ${cid} 0 R >>`;
+      objs[cid] = `<< /Length ${st.length} >>\nstream\n${st}endstream`;
+    });
+    let out = "%PDF-1.4\n";
+    const offsets = [];
+    for (let i = 1; i < objs.length; i++) {
+      offsets[i] = out.length;
+      out += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+    }
+    const xref = out.length;
+    out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+    for (let i = 1; i < objs.length; i++) out += String(offsets[i]).padStart(10, "0") + " 00000 n \n";
+    out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    return new Blob([out], { type: "application/pdf" });
+  }
+
+  global.CHTBarcode = { modules, svg, labelsPdf, _labelsPdfText: (t) => labelsPdf(t) };
 })(typeof window !== "undefined" ? window : globalThis);
