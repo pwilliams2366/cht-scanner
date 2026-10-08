@@ -105,7 +105,7 @@
   const NAVY = "FF17324D", BLUE = "FFDCEAF7", GREEN = "FFE2F2EA", RED = "FFFCE4E4", WHITE = "FFFFFFFF";
   const NUM = 164, CUR = 165;
   // cellXfs indexes
-  const S = { normal: 0, header: 1, title: 2, bold: 3, num: 4, cur: 5, note: 6, group: 7, boldNum: 8, done: 9 };
+  const S = { normal: 0, header: 1, title: 2, bold: 3, num: 4, cur: 5, note: 6, group: 7, boldNum: 8, done: 9, totalNum: 10, totalCur: 11, totalLabel: 12 };
 
   const STYLES_XML =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -130,7 +130,7 @@
     '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>' +
     '<border><left style="thin"><color rgb="FF9FB3C8"/></left><right style="thin"><color rgb="FF9FB3C8"/></right><top style="thin"><color rgb="FF9FB3C8"/></top><bottom style="thin"><color rgb="FF9FB3C8"/></bottom><diagonal/></border></borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-    '<cellXfs count="10">' +
+    '<cellXfs count="13">' +
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
     '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
     '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
@@ -141,6 +141,9 @@
     '<xf numFmtId="0" fontId="3" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
     '<xf numFmtId="0" fontId="3" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>' +
+    `<xf numFmtId="${NUM}" fontId="3" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>` +
+    `<xf numFmtId="${CUR}" fontId="3" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>` +
+    '<xf numFmtId="0" fontId="3" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
     "</cellXfs>" +
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
     '<dxfs count="2">' +
@@ -385,6 +388,20 @@
       ref: `R2:R${last}`,
       rules: [{ op: "greaterThan", value: "0", dxf: 1 }],
     });
+    // Totals row (follows Excel filters: SUBTOTAL ignores rows hidden by a filter)
+    const T = last + 2;
+    const tot = (pick) => rows.reduce((n, r, i) => n + (pick(r, calc[i]) || 0), 0);
+    details.set(T, 1, "TOTALS", S.totalLabel);
+    details.get(T, 1).noFit = true;
+    for (let c = 2; c <= 13; c++) details.style(T, c, S.totalLabel);
+    details.set(T, 14, { f: `=SUBTOTAL(9,N2:N${last})`, v: tot((r) => r.physical_count) }, S.totalNum);
+    details.set(T, 15, { f: `=SUBTOTAL(9,O2:O${last})`, v: tot((r, k) => (typeof k.diff === "number" ? k.diff : 0)) }, S.totalNum);
+    details.style(T, 16, S.totalLabel);
+    details.style(T, 17, S.totalLabel);
+    details.set(T, 18, { f: `=SUBTOTAL(9,R2:R${last})`, v: tot((r, k) => k.impact) }, S.totalCur);
+    details.set(T, 19, { f: `=SUBTOTAL(9,S2:S${last})`, v: tot((r) => r.physical_count * r.cost) }, S.totalCur);
+    for (let c = 20; c <= 21; c++) details.style(T, c, S.totalLabel);
+    for (let c = 14; c <= 19; c++) if (details.get(T, c)) details.get(T, c).noFit = true;
 
     summary.set(1, 1, "Inventory Count Value Summary", S.title);
     for (let c = 2; c <= 4; c++) summary.style(1, c, S.title);

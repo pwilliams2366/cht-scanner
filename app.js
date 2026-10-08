@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.3.2";
+  const APP_VERSION = "Prototype 1 · v0.3.3";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -29,6 +29,7 @@
   const SCOPES = {
     "Parts + Tires (exclude Batteries)": "PARTS_AND_TIRES",
     "Batteries Only": "BATTERIES_ONLY",
+    "Tires Only": "TIRES_ONLY",
     "All Inventory": "ALL_INVENTORY",
   };
 
@@ -174,6 +175,7 @@
     const isBattery = item.part_type.trim().toUpperCase() === "BATTERY";
     if (scope === "PARTS_AND_TIRES") return !isBattery;
     if (scope === "BATTERIES_ONLY") return isBattery;
+    if (scope === "TIRES_ONLY") return item.part_type.trim().toUpperCase() === "TIRE";
     return true;
   }
 
