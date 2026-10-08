@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.3.3";
+  const APP_VERSION = "Prototype 1 · v0.3.4";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -784,7 +784,7 @@
         `Part #: ${escHtml(item.part_number)} &nbsp;&nbsp; Brand: ${escHtml(item.brand || "—")} &nbsp;&nbsp; BIN: ${escHtml(item.bin || "—")}<br>` +
         `Type: ${escHtml(item.part_type)} &nbsp;&nbsp; Tekmetric: ${fmtG(item.in_stock)} &nbsp;&nbsp; WIP: ${fmtG(item.wip)}<br>` +
         `Physical count: <b>${item.physical_count}</b> &nbsp;&nbsp; Difference: ${signed(difference)}<br>` +
-        `Estimated value impact: ${money(value)}`,
+        `Value difference: ${money(value)}`,
       "success", true);
     $("stat-part").textContent = item.part_number;
     $("stat-diff").textContent = signed(difference);

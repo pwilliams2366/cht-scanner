@@ -105,7 +105,7 @@
   const NAVY = "FF17324D", BLUE = "FFDCEAF7", GREEN = "FFE2F2EA", RED = "FFFCE4E4", WHITE = "FFFFFFFF";
   const NUM = 164, CUR = 165;
   // cellXfs indexes
-  const S = { normal: 0, header: 1, title: 2, bold: 3, num: 4, cur: 5, note: 6, group: 7, boldNum: 8, done: 9, totalNum: 10, totalCur: 11, totalLabel: 12 };
+  const S = { normal: 0, header: 1, title: 2, bold: 3, num: 4, cur: 5, note: 6, group: 7, boldNum: 8, done: 9, totalNum: 10, totalCur: 11, totalLabel: 12, boldCur: 13 };
 
   const STYLES_XML =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -130,7 +130,7 @@
     '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>' +
     '<border><left style="thin"><color rgb="FF9FB3C8"/></left><right style="thin"><color rgb="FF9FB3C8"/></right><top style="thin"><color rgb="FF9FB3C8"/></top><bottom style="thin"><color rgb="FF9FB3C8"/></bottom><diagonal/></border></borders>' +
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-    '<cellXfs count="13">' +
+    '<cellXfs count="14">' +
     '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
     '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
     '<xf numFmtId="0" fontId="2" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center"/></xf>' +
@@ -144,6 +144,7 @@
     `<xf numFmtId="${NUM}" fontId="3" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>` +
     `<xf numFmtId="${CUR}" fontId="3" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>` +
     '<xf numFmtId="0" fontId="3" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+    `<xf numFmtId="${CUR}" fontId="3" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>` +
     "</cellXfs>" +
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
     '<dxfs count="2">' +
@@ -165,6 +166,7 @@
       this.autoFilter = null;
       this.gridLines = true;
       this.condFormats = []; // {ref, rules:[{op, value, dxf}]}
+      this.heights = {}; // row -> points
     }
     set(r, c, value, style) {
       const key = r + "," + c;
@@ -228,7 +230,7 @@
       }
       for (const r of [...byRow.keys()].sort((a, b) => a - b)) {
         const cells = byRow.get(r).sort((a, b) => a[0] - b[0]);
-        parts.push(`<row r="${r}">`);
+        parts.push(this.heights[r] ? `<row r="${r}" ht="${this.heights[r]}" customHeight="1">` : `<row r="${r}">`);
         for (const [c, cell] of cells) {
           const ref = colLetter(c) + r;
           const s = cell.s ? ` s="${cell.s}"` : "";
@@ -347,7 +349,7 @@
     const detailHeaders = [
       "Store", "Count Timestamp", "Part Number", "Part Name", "Brand", "BIN#", "Part Type",
       "Count Scope", "Included", "Tekmetric In-Stock", "WIP", "Available", "Net",
-      "Physical Count", "Difference", "Unit Cost", "Retail", "Value Impact", "Counted Value", "Status",
+      "Physical Count", "Difference", "Unit Cost", "Retail", "Value Difference", "Counted Value", "Status",
       "Reconciliation Note",
     ];
     details.appendRow(detailHeaders, S.header);
@@ -415,23 +417,24 @@
     const inc = rows.map((r, i) => [r, calc[i]]).filter(([r]) => r.included);
     const sum = (a) => a.reduce((x, y) => x + y, 0);
     const metrics = [
-      ["Physical items counted", `=SUMIF('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L})`, sum(inc.map(([r]) => r.physical_count))],
-      ["Products physically counted", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L},">0")`, inc.filter(([r]) => r.physical_count > 0).length],
-      ["Differences", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<>0")`, inc.filter(([, k]) => k.diff !== 0).length],
-      ["Increased", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},">0")`, inc.filter(([, k]) => k.diff > 0).length],
-      ["Decreased", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<0")`, inc.filter(([, k]) => k.diff < 0).length],
-      ["Excluded records", `=COUNTIF('Count Details'!I2:I${L},"No")`, rows.length - inc.length],
-      ["Records with WIP", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!K2:K${L},">0")`, inc.filter(([r]) => r.wip > 0).length],
-      ["Positive value impact", `=SUMIF('Count Details'!R2:R${L},">0",'Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact).filter((v) => v > 0))],
-      ["Negative value impact", `=SUMIF('Count Details'!R2:R${L},"<0",'Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact).filter((v) => v < 0))],
-      ["Net value change", `=SUM('Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact))],
+      ["Items counted (units)", `=SUMIF('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L})`, sum(inc.map(([r]) => r.physical_count))],
+      ["Different products counted", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!N2:N${L},">0")`, inc.filter(([r]) => r.physical_count > 0).length],
+      ["Products that don't match Tekmetric", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<>0")`, inc.filter(([, k]) => k.diff !== 0).length],
+      ["Products with MORE than Tekmetric (over)", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},">0")`, inc.filter(([, k]) => k.diff > 0).length],
+      ["Products with FEWER than Tekmetric (short)", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!O2:O${L},"<0")`, inc.filter(([, k]) => k.diff < 0).length],
+      ["Products not part of this count (excluded)", `=COUNTIF('Count Details'!I2:I${L},"No")`, rows.length - inc.length],
+      ["Products with work in progress (WIP)", `=COUNTIFS('Count Details'!I2:I${L},"Yes",'Count Details'!K2:K${L},">0")`, inc.filter(([r]) => r.wip > 0).length],
+      ["Value of extra items (over)", `=SUMIF('Count Details'!R2:R${L},">0",'Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact).filter((v) => v > 0))],
+      ["Value of missing items (short)", `=SUMIF('Count Details'!R2:R${L},"<0",'Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact).filter((v) => v < 0))],
+      ["Net value difference (extra minus missing)", `=SUM('Count Details'!R2:R${L})`, sum(calc.map((k) => k.impact))],
     ];
-    summary.set(8, 1, "Metric", S.header);
-    summary.set(8, 2, "Result", S.header);
+    summary.set(8, 1, "Count Results", S.header);
+    summary.set(8, 2, "", S.header);
     metrics.forEach(([label, formula, value], i) => {
       const r = 9 + i;
-      summary.set(r, 1, label);
-      summary.set(r, 2, { f: formula, v: value }, label.toLowerCase().includes("value") ? S.cur : undefined);
+      const isMoney = label.toLowerCase().includes("value");
+      summary.set(r, 1, label, label.startsWith("Value of missing") ? S.bold : undefined);
+      summary.set(r, 2, { f: formula, v: value }, label.startsWith("Value of missing") ? S.boldCur : isMoney ? S.cur : undefined);
     });
     // Inventory value at unit cost (included items only)
     const D = (col) => `'Count Details'!${col}2:${col}${L}`;
@@ -439,37 +442,45 @@
     const valueRows = [
       ["Tires counted (units)", `=SUMIFS(${D("N")},${D("I")},"Yes",${D("G")},"Tire")`,
         sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.physical_count)), false],
-      ["Tires counted value", `=SUMIFS(${D("S")},${D("I")},"Yes",${D("G")},"Tire")`,
+      ["Value of tires counted", `=SUMIFS(${D("S")},${D("I")},"Yes",${D("G")},"Tire")`,
         sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.physical_count * r.cost)), true],
-      ["Tires value in Tekmetric", `=SUMPRODUCT((${D("I")}="Yes")*(${D("G")}="Tire")*${D("J")}*${D("P")})`,
+      ["Value of tires per Tekmetric", `=SUMPRODUCT((${D("I")}="Yes")*(${D("G")}="Tire")*${D("J")}*${D("P")})`,
         sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.in_stock * r.cost)), true],
-      ["All other items counted value", `=SUMIFS(${D("S")},${D("I")},"Yes",${D("G")},"<>Tire")`,
+      ["Tire value difference (counted minus Tekmetric)", "=B22-B23",
+        sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.physical_count * r.cost)) - sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.in_stock * r.cost)), true],
+      ["Value of all other items counted", `=SUMIFS(${D("S")},${D("I")},"Yes",${D("G")},"<>Tire")`,
         sum(inc.filter(([r]) => !isTire(r)).map(([r]) => r.physical_count * r.cost)), true],
-      ["Total counted value", `=SUMIFS(${D("S")},${D("I")},"Yes")`,
+      ["Total value counted", `=SUMIFS(${D("S")},${D("I")},"Yes")`,
         sum(inc.map(([r]) => r.physical_count * r.cost)), true],
     ];
-    summary.set(20, 1, "Inventory Value (unit cost)", S.header);
-    summary.set(20, 2, "Result", S.header);
+    summary.set(20, 1, "Inventory Value (at Tekmetric unit cost)", S.header);
+    summary.set(20, 2, "", S.header);
     valueRows.forEach(([label, formula, value, money], i) => {
-      summary.set(21 + i, 1, label, label.startsWith("Total") ? S.bold : undefined);
+      summary.set(21 + i, 1, label, label.startsWith("Total") || label.startsWith("Tire value difference") ? S.bold : undefined);
       summary.set(21 + i, 2, { f: formula, v: value }, money ? S.cur : undefined);
     });
 
-    summary.set(27, 1, "Important", S.bold);
-    summary.set(
-      28, 1,
-      "Value impact and counted value use Tekmetric unit cost. Excluded inventory contributes $0. " +
-        "WIP is shown for review and does not automatically change the variance. " +
-        "In a Partial or Test count, only scanned items are included in these totals.",
-      S.note
-    );
-    for (const [r, c] of [[28, 2], [28, 3], [28, 4], [29, 1], [29, 2], [29, 3], [29, 4], [30, 1], [30, 2], [30, 3], [30, 4]]) summary.style(r, c, S.note);
-    summary.merges.push("A28:D30");
+    summary.set(28, 1, "How to read this report", S.bold);
+    const guide = [
+      "Red numbers and minus signs mean MISSING (fewer on the shelf than Tekmetric says). Plain numbers mean EXTRA.",
+      "Tekmetric Changes tab: the to-do list. Every part that needs its Tekmetric quantity changed, grouped by shelf area, with the number to enter.",
+      "Count Details tab: every part with Tekmetric quantity, counted quantity and value. Use the filter arrows to narrow it down; the TOTALS row follows the filter.",
+      "Exceptions and WIP tab: parts that don't match or have work in progress. Check open repair orders before calling a part missing.",
+      "All dollar values use Tekmetric unit cost. Excluded items count as $0. In a Partial or Test count, only scanned items are included.",
+    ];
+    guide.forEach((text, i) => {
+      const r = 29 + i;
+      summary.set(r, 1, text, S.note);
+      summary.style(r, 2, S.note);
+      summary.merges.push(`A${r}:B${r}`);
+      summary.heights[r] = 34;
+      summary.get(r, 1).noFit = true;
+    });
     summary.gridLines = false;
 
     const exceptionHeaders = [
       "Part Number", "Part Name", "Part Type", "BIN#", "In-Stock", "WIP", "Physical Count",
-      "Difference", "Value Impact", "Status", "Reconciliation Note",
+      "Difference", "Value Difference", "Status", "Reconciliation Note",
     ];
     exceptions.appendRow(exceptionHeaders, S.header);
     for (const row of rows) {
@@ -492,8 +503,8 @@
     fitColumns(summary, 10, 42);
     fitColumns(details, 10, 34, new Set([14]));
     fitColumns(exceptions, 10, 34, new Set([7]));
-    summary.widths[1] = 30;
-    summary.widths[2] = 24;
+    summary.widths[1] = 48;
+    summary.widths[2] = 20;
 
     return buildWorkbook([summary, changes, details, exceptions]);
   }
@@ -542,7 +553,7 @@
     ws.set(1, 1, `Tekmetric Changes – ${storeName}`, S.bold);
     ws.set(2, 1, `Counted ${countTimestamp} (${countMode}). ${items.length} parts need their Tekmetric quantity changed. ` +
       'Type the number in "Set Tekmetric To" for each part, then mark Done.');
-    const head = ["BIN#", "Part Number", "Description", "Tekmetric Qty", "Counted", "Difference", "Set Tekmetric To", "Status", "Note", "Done"];
+    const head = ["BIN#", "Part Number", "Description", "Tekmetric Qty", "Counted", "Difference", "Value Difference", "Set Tekmetric To", "Status", "Note", "Done"];
     const H = 4;
     head.forEach((h, i) => ws.set(H, i + 1, h, S.header));
     let r = H;
@@ -550,11 +561,13 @@
     for (const it of items) {
       if (it.area !== currentArea) {
         currentArea = it.area;
-        const count = items.filter((x) => x.area === currentArea).length;
+        const inArea = items.filter((x) => x.area === currentArea);
         r++;
-        ws.set(r, 1, `${AREAS[currentArea].name.toUpperCase()}  (${count})`, S.group);
+        ws.set(r, 1, `${AREAS[currentArea].name.toUpperCase()}  (${inArea.length})`, S.group);
         for (let c = 2; c <= head.length; c++) ws.style(r, c, S.group);
+        ws.set(r, 7, round2(inArea.reduce((n, x) => n + x.diff * x.r.cost, 0)), S.totalCur);
         ws.get(r, 1).noFit = true;
+        ws.get(r, 7).noFit = true;
       }
       const row = it.r;
       const desc = [row.brand, row.name].filter(Boolean).join(" – ") || "—";
@@ -568,10 +581,23 @@
       ws.set(r, 4, round2(row.in_stock));
       ws.set(r, 5, round2(row.physical_count));
       ws.set(r, 6, it.diff);
-      ws.set(r, 7, round2(row.physical_count), S.boldNum);
-      ws.set(r, 8, it.diff < 0 ? "SHORT" : "OVER");
-      ws.set(r, 9, note);
-      ws.set(r, 10, "", S.done);
+      ws.set(r, 7, round2(it.diff * row.cost), S.cur);
+      ws.set(r, 8, round2(row.physical_count), S.boldNum);
+      ws.set(r, 9, it.diff < 0 ? "SHORT" : "OVER");
+      ws.set(r, 10, note);
+      ws.set(r, 11, "", S.done);
+    }
+    if (items.length) {
+      const missing = round2(items.filter((x) => x.diff < 0).reduce((n, x) => n + x.diff * x.r.cost, 0));
+      const extra = round2(items.filter((x) => x.diff > 0).reduce((n, x) => n + x.diff * x.r.cost, 0));
+      r += 2;
+      [["Value of missing items (short)", missing], ["Value of extra items (over)", extra],
+        ["Net value difference (extra minus missing)", round2(missing + extra)]].forEach(([label, v], i) => {
+        ws.set(r + i, 3, label, S.bold);
+        ws.get(r + i, 3).noFit = true;
+        ws.set(r + i, 7, v, S.boldCur);
+      });
+      r += 2;
     }
     if (!items.length) ws.set(H + 1, 1, "No changes needed – every counted part matches Tekmetric.");
     ws.freeze = H + 1;
@@ -581,7 +607,7 @@
     ws.get(1, 1).noFit = true;
     ws.get(2, 1).noFit = true;
     fitColumns(ws, 8, 46);
-    ws.widths[10] = 8;
+    ws.widths[11] = 8;
     return ws;
   }
 
