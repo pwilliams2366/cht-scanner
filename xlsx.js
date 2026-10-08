@@ -344,7 +344,7 @@
     const detailHeaders = [
       "Store", "Count Timestamp", "Part Number", "Part Name", "Brand", "BIN#", "Part Type",
       "Count Scope", "Included", "Tekmetric In-Stock", "WIP", "Available", "Net",
-      "Physical Count", "Difference", "Unit Cost", "Retail", "Value Impact", "Status",
+      "Physical Count", "Difference", "Unit Cost", "Retail", "Value Impact", "Counted Value", "Status",
       "Reconciliation Note",
     ];
     details.appendRow(detailHeaders, S.header);
@@ -365,6 +365,7 @@
         { f: `=IF(I${n}="Yes",N${n}-J${n},"")`, v: k.diff },
         row.cost, row.retail,
         { f: `=IF(I${n}="Yes",O${n}*P${n},0)`, v: k.impact },
+        { f: `=N${n}*P${n}`, v: row.physical_count * row.cost },
         { f: `=IF(I${n}="No","EXCLUDED",IF(O${n}<0,"SHORT",IF(O${n}>0,"OVER","MATCH")))`, v: k.status },
         row.note,
       ]);
@@ -372,10 +373,10 @@
 
     const last = Math.max(details.maxRow, 2);
     details.freeze = 2;
-    details.autoFilter = `A1:T${last}`;
+    details.autoFilter = `A1:U${last}`;
     details.gridLines = false;
     for (const c of [10, 11, 12, 13, 14, 15]) for (let r = 2; r <= last; r++) details.style(r, c, S.num);
-    for (const c of [16, 17, 18]) for (let r = 2; r <= last; r++) details.style(r, c, S.cur);
+    for (const c of [16, 17, 18, 19]) for (let r = 2; r <= last; r++) details.style(r, c, S.cur);
     details.condFormats.push({
       ref: `R2:R${last}`,
       rules: [{ op: "lessThan", value: "0", dxf: 0 }],
@@ -415,15 +416,38 @@
       summary.set(r, 1, label);
       summary.set(r, 2, { f: formula, v: value }, label.toLowerCase().includes("value") ? S.cur : undefined);
     });
-    summary.set(20, 1, "Important", S.bold);
+    // Inventory value at unit cost (included items only)
+    const D = (col) => `'Count Details'!${col}2:${col}${L}`;
+    const isTire = (r) => r.part_type.trim().toLowerCase() === "tire";
+    const valueRows = [
+      ["Tires counted (units)", `=SUMIFS(${D("N")},${D("I")},"Yes",${D("G")},"Tire")`,
+        sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.physical_count)), false],
+      ["Tires counted value", `=SUMIFS(${D("S")},${D("I")},"Yes",${D("G")},"Tire")`,
+        sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.physical_count * r.cost)), true],
+      ["Tires value in Tekmetric", `=SUMPRODUCT((${D("I")}="Yes")*(${D("G")}="Tire")*${D("J")}*${D("P")})`,
+        sum(inc.filter(([r]) => isTire(r)).map(([r]) => r.in_stock * r.cost)), true],
+      ["All other items counted value", `=SUMIFS(${D("S")},${D("I")},"Yes",${D("G")},"<>Tire")`,
+        sum(inc.filter(([r]) => !isTire(r)).map(([r]) => r.physical_count * r.cost)), true],
+      ["Total counted value", `=SUMIFS(${D("S")},${D("I")},"Yes")`,
+        sum(inc.map(([r]) => r.physical_count * r.cost)), true],
+    ];
+    summary.set(20, 1, "Inventory Value (unit cost)", S.header);
+    summary.set(20, 2, "Result", S.header);
+    valueRows.forEach(([label, formula, value, money], i) => {
+      summary.set(21 + i, 1, label, label.startsWith("Total") ? S.bold : undefined);
+      summary.set(21 + i, 2, { f: formula, v: value }, money ? S.cur : undefined);
+    });
+
+    summary.set(27, 1, "Important", S.bold);
     summary.set(
-      21, 1,
-      "Value impact uses Tekmetric unit cost. Excluded inventory contributes $0. " +
-        "WIP is shown for review and does not automatically change the variance.",
+      28, 1,
+      "Value impact and counted value use Tekmetric unit cost. Excluded inventory contributes $0. " +
+        "WIP is shown for review and does not automatically change the variance. " +
+        "In a Partial or Test count, only scanned items are included in these totals.",
       S.note
     );
-    for (const [r, c] of [[21, 2], [21, 3], [21, 4], [22, 1], [22, 2], [22, 3], [22, 4]]) summary.style(r, c, S.note);
-    summary.merges.push("A21:D22");
+    for (const [r, c] of [[28, 2], [28, 3], [28, 4], [29, 1], [29, 2], [29, 3], [29, 4], [30, 1], [30, 2], [30, 3], [30, 4]]) summary.style(r, c, S.note);
+    summary.merges.push("A28:D30");
     summary.gridLines = false;
 
     const exceptionHeaders = [

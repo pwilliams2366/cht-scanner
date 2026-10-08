@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.3.1";
+  const APP_VERSION = "Prototype 1 · v0.3.2";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",

@@ -1,6 +1,6 @@
 // Offline support: always try the network first (so updates show up on refresh),
 // fall back to the saved copy when there is no connection.
-const CACHE = "cht-scanner-v0.3.1";
+const CACHE = "cht-scanner-v0.3.2";
 const FILES = ["./", "./index.html", "./app.js", "./xlsx.js", "./barcode.js", "./manifest.webmanifest",
   "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png"];
 
@@ -14,7 +14,10 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   e.respondWith(
-    fetch(e.request)
+    // Same-origin files skip the browser's 10-minute cache so updates show on next open.
+    (new URL(e.request.url).origin === self.location.origin
+      ? fetch(e.request.url, { cache: "no-cache", credentials: "same-origin" })
+      : fetch(e.request))
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
