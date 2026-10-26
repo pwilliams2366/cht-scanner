@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "Prototype 1 · v0.3.4";
+  const APP_VERSION = "v0.4.0";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -40,6 +40,9 @@
     session: "cht.session.v1",
     lastReport: "cht.lastReport.v1",
     tanks: "cht.tanks.v1",
+    prefs: "cht.prefs.v1",
+    device: "cht.device.v1",
+    backup: "cht.backup.v1",
   };
 
   // ---------------- Storage ----------------
@@ -215,10 +218,24 @@
     save(list) { if (!store(KEYS.tanks, list)) throw new Error("Tanks could not be saved on this iPad (storage full)."); },
     byCode(code) { return this.all().find((t) => t.code === code) || null; },
     forStore(storeName) { return this.all().filter((t) => t.store === storeName); },
+    // "29" + store number + this iPad's 4-digit ID + tank number. The iPad ID keeps two iPads
+    // from ever printing the same code. (Older labels used 0000 as the ID and still work.)
+    deviceId() {
+      let id = load(KEYS.device, null);
+      if (!/^\d{4}$/.test(id || "") || id === "0000") {
+        id = String(1000 + Math.floor(Math.random() * 9000));
+        store(KEYS.device, id);
+      }
+      return id;
+    },
     nextCode(storeName) {
       const storeNo = String(STORES.indexOf(storeName) + 1).padStart(2, "0");
-      const seq = this.all().reduce((m, t) => Math.max(m, Number(t.code.slice(-4)) || 0), 0) + 1;
-      return `29${storeNo}0000${String(seq).padStart(4, "0")}`;
+      const dev = this.deviceId();
+      const used = new Set(this.all().map((t) => t.code));
+      let seq = this.all().filter((t) => t.code.slice(4, 8) === dev).reduce((m, t) => Math.max(m, Number(t.code.slice(-4)) || 0), 0) + 1;
+      let code;
+      do { code = `29${storeNo}${dev}${String(seq++).padStart(4, "0")}`; } while (used.has(code));
+      return code;
     },
     add(t) {
       const list = this.all();
@@ -458,7 +475,14 @@
       ? `A saved count is ready to resume: ${session.store_name}, ${Object.values(session.counts || {}).reduce((a, b) => a + b, 0)} items scanned.`
       : "No unfinished count was found.";
     status += ` • ${n.toLocaleString()} barcodes on this iPad.`;
+    const b = load(KEYS.backup, null);
+    const added = b ? n - (b.count || 0) : n;
+    const backupLine = !b
+      ? "Barcode list has not been backed up from this iPad yet (Barcodes & Data → Save Barcode List)."
+      : `Barcode list last backed up ${friendlyDate(b.at)}` + (added > 0 ? ` • ${added} new since then: back it up soon.` : ".");
     $("home-status").textContent = status;
+    $("home-backup").textContent = backupLine;
+    $("home-backup").className = "status-line small " + (b && added <= 0 ? "muted" : "warn-text");
     show("home");
   }
 
@@ -476,9 +500,10 @@
 
   function showSetup() {
     state.inventory = null; state.csvTextRaw = null; state.csvName = null;
-    fillSelect("sel-store", STORES, STORES[0]);
-    fillSelect("sel-mode", Object.keys(MODES), "Full Inventory Count");
-    fillSelect("sel-scope", Object.keys(SCOPES), "Parts + Tires (exclude Batteries)");
+    const prefs = load(KEYS.prefs, {});
+    fillSelect("sel-store", STORES, STORES.includes(prefs.store) ? prefs.store : STORES[0]);
+    fillSelect("sel-mode", Object.keys(MODES), prefs.mode in MODES ? prefs.mode : "Full Inventory Count");
+    fillSelect("sel-scope", Object.keys(SCOPES), prefs.scope in SCOPES ? prefs.scope : "Parts + Tires (exclude Batteries)");
     $("csv-name").textContent = "No file selected";
     $("file-summary").innerHTML = "";
     $("btn-begin").disabled = true;
@@ -517,8 +542,14 @@
     const keywords = STORE_FILE_KEYWORDS[storeName] || [];
     const fname = normalizedFileName(state.csvName);
     if (!keywords.length || !keywords.some((k) => fname.includes(k))) {
-      return alertBox("Store and inventory file do not match",
-        `You selected:\n\nStore: ${storeName}\nInventory file: ${state.csvName}\n\nChoose the inventory CSV for ${storeName} before starting.`);
+      const useAnyway = await modal({
+        title: "Store and inventory file do not match",
+        body: `You selected:\n\nStore: ${storeName}\nInventory file: ${state.csvName}\n\n` +
+          `The file name doesn't contain "${storeName}". Choose the inventory CSV for ${storeName}.\n\n` +
+          "Only tap Use Anyway if you're certain this Tekmetric export is for this store (for example, the store is named differently in Tekmetric).",
+        buttons: [{ label: "Use Anyway", value: true, cls: "danger" }, { label: "Choose Another File", value: false, cls: "primary" }],
+      });
+      if (!useAnyway) return;
     }
     if (load(KEYS.session, null)) {
       const ok = await confirmBox("Replace saved count?",
@@ -529,6 +560,7 @@
     state.storeName = storeName;
     state.mode = MODES[$("sel-mode").value];
     state.scope = SCOPES[$("sel-scope").value];
+    store(KEYS.prefs, { store: storeName, mode: $("sel-mode").value, scope: $("sel-scope").value });
     for (const it of state.inventory.items.values()) it.physical_count = 0;
     state.last = null;
     state.lastQty = 1;
@@ -1049,15 +1081,43 @@
     renderData();
   }
 
-  function exportMaster() {
-    const rows = [["Barcode", "Part Number"], ...Object.entries(Barcodes.master())];
-    saveFile(new Blob([csvText(rows)], { type: "text/csv" }), "barcode_master.csv");
+  async function exportMaster() {
+    const entries = Object.entries(Barcodes.master());
+    const rows = [["Barcode", "Part Number"], ...entries];
+    const saved = await saveFile(new Blob([csvText(rows)], { type: "text/csv" }), "barcode_master.csv");
+    if (saved !== false) store(KEYS.backup, { at: Date.now(), count: entries.length });
   }
   function exportAlt() {
     const rows = [["Store", "Barcode", "Part Number"]];
     for (const [s, m] of Object.entries(load(KEYS.storeAlt, {}))) for (const [b, p] of Object.entries(m)) rows.push([s, b, p]);
     saveFile(new Blob([csvText(rows)], { type: "text/csv" }), "store_specific_parts.csv");
   }
+  async function importAlt(file) {
+    if (!file) return;
+    try {
+      const { headers, records } = csvDicts(await file.text());
+      for (const h of ["Store", "Barcode", "Part Number"]) if (!headers.includes(h)) throw new Error(`Missing column: ${h}`);
+      const all = load(KEYS.storeAlt, {});
+      let added = 0, same = 0;
+      const conflicts = [];
+      for (const r of records) {
+        const st = clean(r["Store"]), b = clean(r["Barcode"]), p = clean(r["Part Number"]);
+        if (!STORES.includes(st) || !b || !p) continue;
+        all[st] = all[st] || {};
+        if (!(b in all[st])) { all[st][b] = p; added++; }
+        else if (all[st][b] === p) same++;
+        else conflicts.push(`${st} ${b}: iPad has ${all[st][b]}, file has ${p}`);
+      }
+      if (!store(KEYS.storeAlt, all)) throw new Error("Storage is full; nothing was imported.");
+      await alertBox("Store-specific parts imported",
+        `${added} added.\n${same} were already on this iPad.\n${conflicts.length} conflicts (kept the iPad's part):` +
+          (conflicts.length ? "\n\n" + conflicts.slice(0, 12).join("\n") : ""));
+    } catch (e) {
+      await alertBox("Import failed", e.message || String(e));
+    }
+    renderData();
+  }
+
   function renderTanks() {
     fillSelect("tank-store", STORES, $("tank-store").value || state.storeName || STORES[0]);
     const list = Tanks.all();
@@ -1166,6 +1226,8 @@
     $("file-master").onchange = (e) => importMaster(e.target.files[0]);
     $("btn-export-master").onclick = exportMaster;
     $("btn-export-alt").onclick = exportAlt;
+    $("btn-import-alt").onclick = () => { $("file-alt").value = ""; $("file-alt").click(); };
+    $("file-alt").onchange = (e) => importAlt(e.target.files[0]);
     $("btn-export-unknown").onclick = exportUnknown;
     $("btn-tanks").onclick = renderTanks;
     $("btn-tanks-back").onclick = renderData;

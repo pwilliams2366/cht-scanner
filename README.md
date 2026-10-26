@@ -19,4 +19,4 @@ In this prototype, the barcode list, store-specific parts, skipped barcodes and 
 saved count are stored on the iPad only. Back up the barcode list from
 Barcodes & Data → Save Barcode List.
 
-Version: Prototype 1 · v0.3.4 (clearer report labels, value totals on Tekmetric Changes)
+Version: Prototype 1 · v0.4.0 (rollout readiness: per-iPad tank codes, store-specific parts import, remembered setup, backup reminder, Use Anyway for store name mismatches)

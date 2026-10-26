@@ -97,6 +97,7 @@
   .done-files { display: grid; gap: 10px; margin: 8px 0 22px; }
   .done-files div { overflow-wrap: anywhere; }
   .muted { color: var(--muted); }
+  .warn-text { color: var(--amber); font-weight: 600; }
   .small { font-size: 14px; }
   .data-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
   .data-actions { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -161,6 +162,7 @@
       <button class="secondary wide" id="btn-data">Barcodes &amp; Data</button>
     </div>
     <div class="status-line" id="home-status"></div>
+    <div class="status-line small" id="home-backup"></div>
   </section>
 
   <!-- SETUP -->
@@ -266,6 +268,8 @@
         <input type="file" id="file-master" accept=".csv,text/csv,text/comma-separated-values" hidden>
         <button class="secondary" id="btn-export-master">Save Barcode List</button>
         <button class="secondary" id="btn-export-alt">Save Store-Specific Parts</button>
+        <button class="secondary" id="btn-import-alt">Import Store-Specific Parts</button>
+        <input type="file" id="file-alt" accept=".csv,text/csv,text/comma-separated-values" hidden>
         <button class="secondary" id="btn-export-unknown">Save Skipped Barcodes</button>
       </div>
     </div>
