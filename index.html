@@ -98,6 +98,9 @@
   .done-files div { overflow-wrap: anywhere; }
   .muted { color: var(--muted); }
   .warn-text { color: var(--amber); font-weight: 600; }
+  #paste-box { width: 100%; box-sizing: border-box; font: 13px/1.4 ui-monospace, Menlo, monospace; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); resize: vertical; }
+  .paste-steps { margin: 0 0 14px; padding-left: 22px; line-height: 1.7; color: var(--ink); }
+  #btn-paste-csv { margin-left: 8px; }
   .small { font-size: 14px; }
   .data-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
   .data-actions { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -165,6 +168,30 @@
     <div class="status-line small" id="home-backup"></div>
   </section>
 
+  <!-- PASTE FROM EXCEL -->
+  <section id="screen-paste" class="screen">
+    <div class="step">STEP 1 OF 3 • COUNT SETUP</div>
+    <h1>Paste Inventory from Excel</h1>
+    <p class="lead">Use this when the Tekmetric download opens in Excel instead of saving to Files.</p>
+    <div class="card">
+      <ol class="paste-steps">
+        <li>In Tekmetric, export the inventory for this store. It opens in Excel.</li>
+        <li>In Excel, tap the row number <b>1</b>, then drag down to about row <b>300</b> to select those rows.</li>
+        <li>Tap the selection, then tap <b>Copy</b>. Come back here, tap and hold in the box below, then tap <b>Paste</b>.</li>
+        <li>Go back to Excel and copy the next rows (301 to 600), paste them here the same way, and repeat until you reach Excel's last row.</li>
+        <li>Check that the count below matches Excel's last row, then tap <b>Use Pasted Inventory</b>.</li>
+      </ol>
+      <p class="muted small" style="margin:0 0 12px">If Excel says "The copied range is too large", select fewer rows at a time. A small file can be copied all at once with the corner box above row 1.</p>
+      <textarea id="paste-box" rows="8" placeholder="Tap and hold here, then tap Paste" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+      <div class="small" id="paste-count" style="margin-top:8px;font-weight:600;color:var(--ink)"></div>
+      <div class="warn-text small" id="paste-msg" style="margin-top:8px"></div>
+    </div>
+    <div class="row-buttons">
+      <button class="secondary" id="btn-paste-cancel">Cancel</button>
+      <button class="primary" id="btn-paste-load">Use Pasted Inventory</button>
+    </div>
+  </section>
+
   <!-- SETUP -->
   <section id="screen-setup" class="screen">
     <div class="step">STEP 1 OF 3 • COUNT SETUP</div>
@@ -177,6 +204,7 @@
         <label>Inventory CSV</label>
         <div>
           <button class="secondary" id="btn-choose-csv">Choose Inventory CSV</button>
+          <button class="secondary" id="btn-paste-csv">Paste from Excel</button>
           <input type="file" id="file-csv" accept=".csv,text/csv,text/comma-separated-values" hidden>
           <div class="muted small" id="csv-name" style="margin-top:8px">No file selected</div>
         </div>

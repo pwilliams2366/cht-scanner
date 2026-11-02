@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "v0.4.0";
+  const APP_VERSION = "v0.4.1";
 
   const STORES = [
     "Franklin Street", "Carrboro", "Cole Park", "Woodcroft", "University Place",
@@ -448,6 +448,7 @@
       count_mode: state.mode,
       count_scope: state.scope,
       csv_name: state.csvName,
+      csv_pasted: !!state.csvPasted,
       csv_modified: state.csvModified,
       csv_text: state.csvTextRaw,
       last_scanned_part: state.last,
@@ -499,7 +500,7 @@
   }
 
   function showSetup() {
-    state.inventory = null; state.csvTextRaw = null; state.csvName = null;
+    state.inventory = null; state.csvTextRaw = null; state.csvName = null; state.csvPasted = false;
     const prefs = load(KEYS.prefs, {});
     fillSelect("sel-store", STORES, STORES.includes(prefs.store) ? prefs.store : STORES[0]);
     fillSelect("sel-mode", Object.keys(MODES), prefs.mode in MODES ? prefs.mode : "Full Inventory Count");
@@ -510,25 +511,138 @@
     show("setup");
   }
 
+  function useInventoryText(text, name, modified, pasted, extraHtml = "") {
+    const inv = new Inventory();
+    const loaded = inv.load(text);
+    const t = inv.countByType();
+    state.inventory = inv;
+    state.csvTextRaw = text;
+    state.csvName = name;
+    state.csvModified = modified || null;
+    state.csvPasted = !!pasted;
+    $("csv-name").textContent = name;
+    $("file-summary").innerHTML =
+      `<b>Inventory ${pasted ? "pasted" : "file"} ready</b><br>${loaded.toLocaleString()} usable inventory records<br>` +
+      `Parts: ${(t.Part || 0).toLocaleString()} &nbsp;&nbsp; Tires: ${(t.Tire || 0).toLocaleString()} &nbsp;&nbsp; Batteries: ${(t.Battery || 0).toLocaleString()}` +
+      (modified ? `<br>${pasted ? "Pasted" : "File modified"}: ${friendlyDate(modified)}` : "") + extraHtml;
+    $("btn-begin").disabled = false;
+    return loaded;
+  }
+
   async function onCsvChosen(file) {
     if (!file) return;
     try {
-      const text = await file.text();
-      const inv = new Inventory();
-      const loaded = inv.load(text);
-      const t = inv.countByType();
-      state.inventory = inv;
-      state.csvTextRaw = text;
-      state.csvName = file.name;
-      state.csvModified = file.lastModified || null;
-      $("csv-name").textContent = file.name;
-      $("file-summary").innerHTML =
-        `<b>Inventory file ready</b><br>${loaded.toLocaleString()} usable inventory records<br>` +
-        `Parts: ${(t.Part || 0).toLocaleString()} &nbsp;&nbsp; Tires: ${(t.Tire || 0).toLocaleString()} &nbsp;&nbsp; Batteries: ${(t.Battery || 0).toLocaleString()}` +
-        (file.lastModified ? `<br>File modified: ${friendlyDate(file.lastModified)}` : "");
-      $("btn-begin").disabled = false;
+      useInventoryText(await file.text(), file.name, file.lastModified, false);
     } catch (e) {
       alertBox("Inventory file could not be loaded", e.message || String(e));
+    }
+  }
+
+  // ---------------- Paste from Excel ----------------
+  // Excel copies cells as tab-separated text (cells with tabs/newlines/quotes are quoted).
+  function parseTSV(text) {
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    const rows = [];
+    let row = [], field = "", i = 0, inQuotes = false, atStart = true;
+    while (i < text.length) {
+      const ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+          inQuotes = false; i++; continue;
+        }
+        field += ch; i++; continue;
+      }
+      if (ch === '"' && atStart) { inQuotes = true; atStart = false; i++; continue; }
+      if (ch === "\t") { row.push(field); field = ""; atStart = true; i++; continue; }
+      if (ch === "\r" || ch === "\n") {
+        row.push(field); field = ""; atStart = true;
+        rows.push(row); row = [];
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        i++; continue;
+      }
+      field += ch; atStart = false; i++;
+    }
+    if (field !== "" || row.length) { row.push(field); rows.push(row); }
+    return rows.filter((r) => r.some((c) => c.trim() !== ""));
+  }
+
+  const stripZeros = (p) => p.replace(/^0+(?=.)/, "");
+
+  // Turns pasted Excel cells back into Tekmetric CSV text, undoing what Excel changes when it opens a CSV.
+  function pastedToCsv(text) {
+    let rows = text.includes("\t") ? parseTSV(text) : parseCSV(text);
+    const hi = rows.findIndex((r) => r.some((c) => c.trim() === "Part Number"));
+    if (hi < 0) throw new Error("The pasted cells don't include the Part Number heading. In Excel, select the whole sheet (tap the corner box above row 1), copy, and paste again.");
+    rows = rows.slice(hi).map((r) => r.map((c) => c.trim()));
+    const headers = rows[0];
+    const headerKey = headers.join("\t");
+    rows = [headers, ...rows.slice(1).filter((r) => r.join("\t") !== headerKey)];
+    const missing = REQUIRED.filter((h) => !headers.includes(h));
+    if (missing.length) throw new Error(`The pasted cells are missing these columns: ${missing.join(", ")}. Copy the whole sheet, not just part of it.`);
+    const pn = headers.indexOf("Part Number");
+    const textCols = new Set(["Part Number", "Part Name", "Brand", "BIN#", "Part Type"].map((h) => headers.indexOf(h)));
+    // Part numbers this iPad already knows (barcode list + store-specific parts), to restore leading zeros Excel dropped
+    const known = new Set(Object.values(Barcodes.master()));
+    for (const m of Object.values(load(KEYS.storeAlt, {}))) for (const v of Object.values(m)) known.add(v);
+    const byStripped = new Map();
+    for (const k of known) {
+      const sk = stripZeros(k);
+      if (sk !== k) byStripped.set(sk, byStripped.has(sk) ? null : k);
+    }
+    const inSheet = new Set(rows.slice(1).map((r) => r[pn]));
+    let restored = 0;
+    const sci = [];
+    for (const r of rows.slice(1)) {
+      const p = r[pn] || "";
+      if (/^\d+(\.\d+)?E\+\d+$/i.test(p)) sci.push(p);
+      else if (p && !known.has(p)) {
+        const fix = byStripped.get(stripZeros(p));
+        if (fix && !inSheet.has(fix)) { r[pn] = fix; restored++; }
+      }
+      r.forEach((c, idx) => {
+        if (!textCols.has(idx) && /^-?\$?\d{1,3}(,\d{3})+(\.\d+)?$|^-?\$\d+(\.\d+)?$/.test(c)) r[idx] = c.replace(/[$,]/g, "");
+      });
+    }
+    return { csv: csvText(rows), restored, sci };
+  }
+
+  function openPaste() {
+    $("paste-box").value = "";
+    $("paste-msg").textContent = "";
+    updatePasteCount();
+    show("paste");
+  }
+
+  function updatePasteCount() {
+    const v = $("paste-box").value;
+    const lines = v ? v.split(/\r\n|\n|\r/).filter((l) => l.trim() !== "") : [];
+    const isHeader = (l) => /(^|\t)Part Number(\t|$)/.test(l);
+    const hi = lines.findIndex(isHeader);
+    const hasHeader = hi >= 0;
+    // count each row once, so an overlapping batch or a repeated heading doesn't inflate the total
+    const rows = new Set((hasHeader ? lines.slice(hi + 1) : lines).filter((l) => !isHeader(l))).size;
+    $("paste-count").textContent = !lines.length ? "Nothing pasted yet." :
+      `${rows.toLocaleString()} inventory row${rows === 1 ? "" : "s"} pasted so far` +
+      (hasHeader ? ` (Excel rows 2 to ${(rows + 1).toLocaleString()}).` : ". The first batch must include row 1 (the headings).");
+    // keep the cursor at the end so the next batch lands after the last one
+    $("paste-box").scrollTop = $("paste-box").scrollHeight;
+  }
+
+  function loadPasted() {
+    const raw = $("paste-box").value;
+    if (!raw.trim()) { $("paste-msg").textContent = "Nothing pasted yet. Tap and hold in the box, then tap Paste."; return; }
+    try {
+      const { csv, restored, sci } = pastedToCsv(raw);
+      show("setup");
+      const storeName = $("sel-store").value;
+      const extra =
+        (restored ? `<br>${restored} part number${restored === 1 ? "" : "s"} had leading zeros restored (Excel removes them).` : "") +
+        (sci.length ? `<br><span class="warn-text">${sci.length} part number${sci.length === 1 ? " shows" : "s show"} like ${escHtml(sci[0])} because the Excel column was too narrow. ` +
+          "Those items can't be matched: in Excel, widen the Part Number column (double-tap its right edge), then copy and paste again.</span>" : "");
+      useInventoryText(csv, `Pasted from Excel (${storeName})`, Date.now(), true, extra);
+    } catch (e) {
+      $("paste-msg").textContent = e.message || String(e);
     }
   }
 
@@ -541,7 +655,15 @@
     const storeName = $("sel-store").value;
     const keywords = STORE_FILE_KEYWORDS[storeName] || [];
     const fname = normalizedFileName(state.csvName);
-    if (!keywords.length || !keywords.some((k) => fname.includes(k))) {
+    if (state.csvPasted) {
+      const sure = await modal({
+        title: "Confirm the store",
+        body: `Pasted inventory has no file name, so the app can't check which store it belongs to.\n\n` +
+          `Is the sheet you copied from Excel the Tekmetric inventory for ${storeName}?`,
+        buttons: [{ label: "Go Back", value: false, cls: "secondary" }, { label: `Yes, ${storeName}`, value: true, cls: "primary" }],
+      });
+      if (!sure) return;
+    } else if (!keywords.length || !keywords.some((k) => fname.includes(k))) {
       const useAnyway = await modal({
         title: "Store and inventory file do not match",
         body: `You selected:\n\nStore: ${storeName}\nInventory file: ${state.csvName}\n\n` +
@@ -582,7 +704,7 @@
         if (it) it.physical_count = parseFloat(count) || 0;
       }
       Object.assign(state, {
-        inventory: inv, csvTextRaw: s.csv_text, csvName: s.csv_name, csvModified: s.csv_modified,
+        inventory: inv, csvTextRaw: s.csv_text, csvName: s.csv_name, csvModified: s.csv_modified, csvPasted: !!s.csv_pasted,
         storeName: s.store_name, mode: s.count_mode, scope: s.count_scope,
         last: s.last_scanned_part || null, lastQty: parseFloat(s.last_qty) || 1, active: true,
         lastTank: s.last_tank || null, tankReadings: s.tank_readings || {},
@@ -1210,6 +1332,16 @@
     $("btn-setup-back").onclick = renderHome;
     $("btn-choose-csv").onclick = () => { $("file-csv").value = ""; $("file-csv").click(); };
     $("file-csv").onchange = (e) => onCsvChosen(e.target.files[0]);
+    $("btn-paste-csv").onclick = openPaste;
+    $("btn-paste-load").onclick = loadPasted;
+    $("btn-paste-cancel").onclick = () => show("setup");
+    $("paste-box").addEventListener("input", () => { $("paste-msg").textContent = ""; updatePasteCount(); });
+    $("paste-box").addEventListener("paste", () => {
+      // put each new batch on its own line at the end, even if the cursor was moved
+      const box = $("paste-box");
+      if (box.value && !/[\r\n]$/.test(box.value)) box.value += "\n";
+      box.setSelectionRange(box.value.length, box.value.length);
+    });
     $("btn-begin").onclick = beginCount;
     $("btn-undo").onclick = undoLast;
     $("btn-add-qty").onclick = addQuantity;
